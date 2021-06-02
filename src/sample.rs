@@ -4,7 +4,7 @@ use rand::{thread_rng, RngCore};
 
 use std::f32::EPSILON;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Sample1D {
     pub x: f32,
 }
@@ -51,7 +51,7 @@ impl Sample2D {
         Sample2D::new(random(), random())
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Sample3D {
     pub x: f32,
     pub y: f32,
