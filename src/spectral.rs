@@ -203,6 +203,7 @@ pub enum InterpolationMode {
 
 #[derive(Debug, Clone)]
 pub enum SPD {
+    Const(f32),
     Linear {
         signal: Vec<f32>,
         bounds: Bounds1D,
@@ -238,11 +239,7 @@ pub enum SPD {
 
 impl Default for SPD {
     fn default() -> Self {
-        SPD::Linear {
-            signal: vec![0.0],
-            bounds: EXTENDED_VISIBLE_RANGE,
-            mode: InterpolationMode::Linear,
-        }
+        SPD::Const(0.0)
     }
 }
 
@@ -284,6 +281,7 @@ pub trait SpectralPowerDistributionFunction {
 impl SpectralPowerDistributionFunction for SPD {
     fn evaluate_power(&self, lambda: f32) -> f32 {
         match &self {
+            SPD::Const(v) => v.max(0.0),
             SPD::Linear {
                 signal,
                 bounds,
@@ -450,6 +448,10 @@ impl SpectralPowerDistributionFunction for CDF {
         mut sample: Sample1D,
     ) -> (SingleWavelength, PDF) {
         match &self.cdf {
+            SPD::Const(v) => (
+                SingleWavelength::new(wavelength_range.sample(sample.x), (*v).into()),
+                (1.0 / wavelength_range.span()).into(),
+            ),
             SPD::Linear {
                 signal,
                 bounds,
