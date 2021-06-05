@@ -259,14 +259,24 @@ pub trait SpectralPowerDistributionFunction {
         wavelength_range: Bounds1D,
         sample: Sample1D,
     ) -> (SingleWavelength, PDF);
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32) -> f32;
-    fn convert_to_xyz(&self, integration_bounds: Bounds1D, step_size: f32) -> XYZColor {
+    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool)
+        -> f32;
+    fn convert_to_xyz(
+        &self,
+        integration_bounds: Bounds1D,
+        step_size: f32,
+        clamped: bool,
+    ) -> XYZColor {
         let iterations = (integration_bounds.span() / step_size) as usize;
         let mut sum: XYZColor = XYZColor::ZERO;
         for i in 0..iterations {
             let lambda = integration_bounds.lower + (i as f32) * step_size;
             let angstroms = lambda * 10.0;
-            let val = self.evaluate_power(lambda);
+            let val = if clamped {
+                self.evaluate(lambda)
+            } else {
+                self.evaluate_power(lambda)
+            };
             sum.0 += f32x4::new(
                 val * x_bar(angstroms),
                 val * y_bar(angstroms),
@@ -423,12 +433,21 @@ impl SpectralPowerDistributionFunction for SPD {
             }
         }
     }
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32) -> f32 {
+    fn evaluate_integral(
+        &self,
+        integration_bounds: Bounds1D,
+        step_size: f32,
+        clamped: bool,
+    ) -> f32 {
         let iterations = (integration_bounds.span() / step_size) as usize;
         let mut sum = 0.0;
         for i in 0..iterations {
             let lambda = integration_bounds.lower + (i as f32) * step_size;
-            let val = self.evaluate_power(lambda);
+            let val = if clamped {
+                self.evaluate(lambda)
+            } else {
+                self.evaluate_power(lambda)
+            };
             sum += val * step_size;
         }
         sum
@@ -521,8 +540,8 @@ impl SpectralPowerDistributionFunction for CDF {
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
     }
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32) -> f32 {
-        self.pdf.evaluate_integral(integration_bounds, step_size)
+    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool) -> f32 {
+        self.pdf.evaluate_integral(integration_bounds, step_size, clamped)
     }
 }
 
