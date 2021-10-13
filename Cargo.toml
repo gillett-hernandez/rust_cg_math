@@ -7,20 +7,19 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-itertools = "0.10.1"
-rayon = "1.5.0"
-toml = "0.5"
-num_cpus = "1.13.0"
-serde = { version = "1.0.120", features = ["derive"] }
-rand = "0.8.4"
-image = "0.23.6"
-packed_simd = { version = "0.3.4", package = "packed_simd_2" }
-nalgebra = "0.29.0"
-ordered-float = "2.8.0"
-exr = "0.9.0"
-pbr = "1.0.3"
-parking_lot = "0.11.0"
 crossbeam = "0.8.1"
+exr = "0.9.0"
+image = "0.23.6"
+itertools = "0.10.1"
+nalgebra = "0.29.0"
+num_cpus = "1.13.0"
+ordered-float = "2.8.0"
+packed_simd = { version = "0.3.4", package = "packed_simd_2" }
+parking_lot = "0.11.0"
+rand = "0.8.4"
+rayon = "1.5.0"
+serde = { version = "1.0.120", features = ["derive"] }
+toml = "0.5"
 
 [build-dependencies]
 serde = { version = "1.0.120", features = ["derive"] }
