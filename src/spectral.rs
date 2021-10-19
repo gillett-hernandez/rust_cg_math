@@ -243,6 +243,23 @@ impl Default for SPD {
     }
 }
 
+impl Div<f32> for SPD {
+    type Output = SPD;
+    fn div(self, rhs: f32) -> Self::Output {
+        match self {
+            SPD::Const(c) => SPD::Const(c / rhs),
+            SPD::Blackbody { temperature, boost } => SPD::Blackbody {
+                temperature: temperature,
+                boost: boost / rhs,
+            },
+            spd => SPD::Machine {
+                seed: rhs.recip(),
+                list: vec![(Op::Mul, spd)],
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CDF {
     pub pdf: SPD,
@@ -540,8 +557,14 @@ impl SpectralPowerDistributionFunction for CDF {
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
     }
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool) -> f32 {
-        self.pdf.evaluate_integral(integration_bounds, step_size, clamped)
+    fn evaluate_integral(
+        &self,
+        integration_bounds: Bounds1D,
+        step_size: f32,
+        clamped: bool,
+    ) -> f32 {
+        self.pdf
+            .evaluate_integral(integration_bounds, step_size, clamped)
     }
 }
 
@@ -686,5 +709,84 @@ mod tests {
             s += sampled.0.energy.0 / (sampled.1).0;
         }
         println!("{}", s);
+    }
+
+    #[test]
+    fn test_cdf_addition() {
+        let cdf1: CDF = SPD::Exponential {
+            signal: vec![(400.0, 100.0, 100.0, 0.9), (600.0, 100.0, 100.0, 1.0)],
+        }
+        .into();
+
+        for i in 0..100 {
+            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
+            println!(
+                "{}, {}, {}",
+                lambda,
+                cdf1.pdf.evaluate_power(lambda),
+                cdf1.cdf.evaluate_power(lambda)
+            );
+        }
+        println!();
+        let cdf2: CDF = SPD::Linear {
+            signal: vec![
+                0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
+                6.0, 3.0, 1.0, 0.4,
+            ],
+            bounds: BOUNDED_VISIBLE_RANGE,
+            mode: InterpolationMode::Cubic,
+        }
+        .into();
+
+        for i in 0..100 {
+            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
+            println!(
+                "{}, {}, {}",
+                lambda,
+                cdf2.pdf.evaluate_power(lambda),
+                cdf2.cdf.evaluate_power(lambda)
+            );
+        }
+        println!();
+        let integral1 = cdf1.cdf_integral;
+        let integral2 = cdf2.cdf_integral;
+
+        let combined_spd = SPD::Machine {
+            seed: 0.0,
+            list: vec![(Op::Add, cdf1.pdf), (Op::Add, cdf2.pdf)],
+        };
+
+        let combined_cdf_curve = SPD::Machine {
+            seed: 0.0,
+            list: vec![
+                (Op::Add, cdf1.cdf / (2.0 * integral1)),
+                (Op::Add, cdf2.cdf / (2.0 * integral2)),
+            ],
+        };
+
+        // let combined_spd
+        let combined_cdf = CDF {
+            pdf: combined_spd,
+            cdf: combined_cdf_curve,
+            cdf_integral: integral1 + integral2,
+        };
+        for i in 0..100 {
+            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
+            println!(
+                "{}, {}, {}",
+                lambda,
+                combined_cdf.pdf.evaluate_power(lambda),
+                combined_cdf.cdf.evaluate_power(lambda)
+            );
+        }
+
+        let mut s = 0.0;
+        for _ in 0..1000 {
+            let sampled = combined_cdf
+                .sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
+
+            s += sampled.0.energy.0 / (sampled.1).0;
+        }
+        println!("\n\n{} {}", s / 1000.0, combined_cdf.cdf_integral);
     }
 }
