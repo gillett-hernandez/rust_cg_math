@@ -221,6 +221,7 @@ pub enum SPD {
         a: f32,
         b: f32,
     },
+    // offset, sigma1, sigma2, mult
     Exponential {
         signal: Vec<(f32, f32, f32, f32)>,
     },
@@ -240,6 +241,14 @@ pub enum SPD {
 impl Default for SPD {
     fn default() -> Self {
         SPD::Const(0.0)
+    }
+}
+
+impl SPD {
+    pub fn y_bar() -> SPD {
+        SPD::Exponential {
+            signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
+        }
     }
 }
 
@@ -540,8 +549,14 @@ impl SpectralPowerDistributionFunction for CDF {
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
     }
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool) -> f32 {
-        self.pdf.evaluate_integral(integration_bounds, step_size, clamped)
+    fn evaluate_integral(
+        &self,
+        integration_bounds: Bounds1D,
+        step_size: f32,
+        clamped: bool,
+    ) -> f32 {
+        self.pdf
+            .evaluate_integral(integration_bounds, step_size, clamped)
     }
 }
 
@@ -608,6 +623,12 @@ impl From<SPD> for CDF {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_y_bar_spd() {
+        let spd = SPD::y_bar();
+        assert!(spd.evaluate_power(550.0) == 0.99955124);
+    }
     #[test]
     fn test_cdf1() {
         let cdf: CDF = SPD::Linear {
