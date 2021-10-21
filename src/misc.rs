@@ -38,7 +38,7 @@ pub fn max_blackbody_lambda(temp: f32) -> f32 {
 
 pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
     let theta = uv.1 * PI;
-    let phi = (uv.0 - 0.5) * PI;
+    let phi = (uv.0 - 0.5) * 2.0 * PI;
     let (sin_theta, cos_theta) = theta.sin_cos();
     let (sin_phi, cos_phi) = phi.sin_cos();
     let (x, y, z) = (sin_theta * cos_phi, sin_theta * sin_phi, cos_theta);
@@ -48,7 +48,33 @@ pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
 pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
     let phi = direction.y().atan2(direction.x());
     let theta = direction.z().acos();
-    let u = phi / PI + 0.5;
+    let u = phi / 2.0 / PI + 0.5;
     let v = theta / PI;
     (u, v)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{random::*, Sample2D};
+
+    #[test]
+    fn test_direction_to_uv() {
+        let direction = random_on_unit_sphere(Sample2D::new_random_sample());
+        let uv = direction_to_uv(direction);
+        println!("{:?} {:?}", direction, uv);
+    }
+
+    #[test]
+    fn test_uv_to_direction() {
+        let mut center = Vec3::ZERO;
+        let N = 100;
+        for _ in 0..N {
+            let uv = (rand::random::<f32>(), rand::random::<f32>());
+            let direction = uv_to_direction(uv);
+            println!("{:?} {:?}", direction, uv);
+            center = center + direction / N as f32;
+        }
+        println!("{:?}", center);
+    }
 }

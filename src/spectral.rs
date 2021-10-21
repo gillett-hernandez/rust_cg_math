@@ -202,7 +202,7 @@ pub enum InterpolationMode {
 }
 
 #[derive(Debug, Clone)]
-pub enum SPD {
+pub enum SPD<'a> {
     Const(f32),
     Linear {
         signal: Vec<f32>,
@@ -221,6 +221,7 @@ pub enum SPD {
         a: f32,
         b: f32,
     },
+    // offset, sigma1, sigma2, mult
     Exponential {
         signal: Vec<(f32, f32, f32, f32)>,
     },
@@ -233,37 +234,45 @@ pub enum SPD {
     },
     Machine {
         seed: f32,
-        list: Vec<(Op, SPD)>,
+        list: Vec<(Op, &'a SPD<'a>)>,
     },
 }
 
-impl Default for SPD {
+impl<'a> Default for SPD<'a> {
     fn default() -> Self {
         SPD::Const(0.0)
     }
 }
 
-impl Div<f32> for SPD {
-    type Output = SPD;
-    fn div(self, rhs: f32) -> Self::Output {
-        match self {
-            SPD::Const(c) => SPD::Const(c / rhs),
-            SPD::Blackbody { temperature, boost } => SPD::Blackbody {
-                temperature: temperature,
-                boost: boost / rhs,
-            },
-            spd => SPD::Machine {
-                seed: rhs.recip(),
-                list: vec![(Op::Mul, spd)],
-            },
+// impl<'a> Div<f32> for SPD<'a> {
+//     type Output = SPD<'a>;
+//     fn div(self, rhs: f32) -> Self::Output {
+//         match self {
+//             SPD::Const(c) => SPD::Const(c / rhs),
+//             SPD::Blackbody { temperature, boost } => SPD::Blackbody {
+//                 temperature,
+//                 boost: boost / rhs,
+//             },
+//             _ => SPD::Machine {
+//                 seed: rhs.recip(),
+//                 list: vec![(Op::Mul, &self)],
+//             },
+//         }
+//     }
+// }
+
+impl<'a> SPD<'a> {
+    pub fn y_bar() -> SPD<'a> {
+        SPD::Exponential {
+            signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
         }
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CDF {
-    pub pdf: SPD,
-    pub cdf: SPD,
+pub struct CDF<'a, 'b> {
+    pub pdf: SPD<'a>,
+    pub cdf: SPD<'b>,
     pub cdf_integral: f32,
 }
 
@@ -305,7 +314,7 @@ pub trait SpectralPowerDistributionFunction {
     }
 }
 
-impl SpectralPowerDistributionFunction for SPD {
+impl SpectralPowerDistributionFunction for SPD<'_> {
     fn evaluate_power(&self, lambda: f32) -> f32 {
         match &self {
             SPD::Const(v) => v.max(0.0),
@@ -471,7 +480,7 @@ impl SpectralPowerDistributionFunction for SPD {
     }
 }
 
-impl SpectralPowerDistributionFunction for CDF {
+impl<'a, 'b> SpectralPowerDistributionFunction for CDF<'a, 'b> {
     fn evaluate(&self, lambda: f32) -> f32 {
         self.pdf.evaluate(lambda)
     }
@@ -568,8 +577,8 @@ impl SpectralPowerDistributionFunction for CDF {
     }
 }
 
-impl From<SPD> for CDF {
-    fn from(curve: SPD) -> Self {
+impl<'a, 'b> From<SPD<'a>> for CDF<'a, 'b> {
+    fn from(curve: SPD<'a>) -> Self {
         match &curve {
             SPD::Linear {
                 signal,
@@ -631,6 +640,12 @@ impl From<SPD> for CDF {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_y_bar_spd() {
+        let spd = SPD::y_bar();
+        assert!(spd.evaluate_power(550.0) == 0.99955124);
+    }
     #[test]
     fn test_cdf1() {
         let cdf: CDF = SPD::Linear {
@@ -753,15 +768,12 @@ mod tests {
 
         let combined_spd = SPD::Machine {
             seed: 0.0,
-            list: vec![(Op::Add, cdf1.pdf), (Op::Add, cdf2.pdf)],
+            list: vec![(Op::Add, &cdf1.pdf), (Op::Add, &cdf2.pdf)],
         };
 
         let combined_cdf_curve = SPD::Machine {
             seed: 0.0,
-            list: vec![
-                (Op::Add, cdf1.cdf / (2.0 * integral1)),
-                (Op::Add, cdf2.cdf / (2.0 * integral2)),
-            ],
+            list: vec![(Op::Add, &cdf1.cdf), (Op::Add, &cdf2.cdf)],
         };
 
         // let combined_spd
