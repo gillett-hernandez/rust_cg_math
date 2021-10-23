@@ -77,4 +77,17 @@ mod test {
         }
         println!("{:?}", center);
     }
+
+    #[test]
+    fn test_bijectiveness_of_uv_direction() {
+        let uv = (rand::random::<f32>(), rand::random::<f32>());
+        let direction = uv_to_direction(uv);
+        let uv2 = direction_to_uv(direction);
+        assert!(uv == uv2, "{:?} {:?}", uv, uv2);
+
+        let direction = random_on_unit_sphere(Sample2D::new_random_sample());
+        let uv = direction_to_uv(direction);
+        let direction2 = uv_to_direction(uv);
+        assert!((direction - direction2).norm() < 0.000001, "{:?} {:?}", direction, direction2);
+    }
 }
