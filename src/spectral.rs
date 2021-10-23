@@ -531,7 +531,12 @@ impl SpectralPowerDistributionFunction for CDF {
                                     / (signal.len() as f32);
                             let v0 = signal[index - 1] / self.cdf_integral;
                             let v1 = signal[index] / self.cdf_integral;
-                            let t = (sample.x - v0) / (v1 - v0);
+                            let t = if v0 != v1 {
+                                (sample.x - v0) / (v1 - v0)
+                            } else {
+                                0.0
+                            };
+
                             assert!(0.0 <= t && t <= 1.0, "{}, {}, {}, {}", t, sample.x, v0, v1);
                             match mode {
                                 InterpolationMode::Linear => (1.0 - t) * left + t * right,
