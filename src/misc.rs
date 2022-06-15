@@ -19,6 +19,13 @@ pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
     alpha * (-(sqrt * sqrt) / 2.0).exp()
 }
 
+pub fn gaussian_f32x4(x: f32x4, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32x4 {
+    let sqrt = (x - mu)
+        / x.lt(f32x4::splat(mu))
+            .select(f32x4::splat(sigma1), f32x4::splat(sigma2));
+    alpha * (-(sqrt * sqrt) / 2.0).exp()
+}
+
 pub fn w(x: f32, mul: f32, offset: f32, sigma: f32) -> f32 {
     mul * (-(x - offset).powi(2) / sigma).exp() / (sigma * PI).sqrt()
 }
@@ -30,6 +37,12 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
     let lambda = lambda * 1e-9;
 
     lambda.powi(-5) * HCC2 / ((HKC / (lambda * temperature)).exp() - 1.0)
+}
+
+pub fn blackbody_f32x4(temperature: f32, lambda: f32x4) -> f32x4 {
+    let lambda = lambda * 1e-9;
+
+    lambda.powf(f32x4::splat(-5.0)) * HCC2 / ((HKC / (lambda * temperature)).exp() - 1.0)
 }
 
 pub fn max_blackbody_lambda(temp: f32) -> f32 {
@@ -88,6 +101,11 @@ mod test {
         let direction = random_on_unit_sphere(Sample2D::new_random_sample());
         let uv = direction_to_uv(direction);
         let direction2 = uv_to_direction(uv);
-        assert!((direction - direction2).norm() < 0.000001, "{:?} {:?}", direction, direction2);
+        assert!(
+            (direction - direction2).norm() < 0.000001,
+            "{:?} {:?}",
+            direction,
+            direction2
+        );
     }
 }

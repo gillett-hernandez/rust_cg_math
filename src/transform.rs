@@ -164,6 +164,8 @@ impl Transform3 {
     }
 
     pub fn from_axis_angle(axis: Vec3, radians: f32) -> Self {
+        // TODO: change this to the code at https://www.iquilezles.org/www/articles/noacos/noacos.htm
+
         let axisangle = radians * nalgebra::Vector3::new(axis.x(), axis.y(), axis.z());
 
         let affine = nalgebra::Matrix4::from_scaled_axis(axisangle);

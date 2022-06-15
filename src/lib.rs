@@ -105,6 +105,72 @@ impl Div<f32> for PDF {
     }
 }
 
+// don't like copying this like this but i'm not sure how to do this using a macro so
+
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub struct PDFx4(pub f32x4);
+impl PDFx4 {
+    pub fn is_nan(&self) -> bool {
+        self.0.is_nan().any()
+    }
+}
+
+impl From<f32x4> for PDFx4 {
+    fn from(val: f32x4) -> Self {
+        PDFx4(val)
+    }
+}
+
+impl From<PDFx4> for f32x4 {
+    fn from(val: PDFx4) -> Self {
+        val.0
+    }
+}
+
+impl Add for PDFx4 {
+    type Output = PDFx4;
+    fn add(self, rhs: PDFx4) -> Self::Output {
+        PDFx4::from(self.0 + rhs.0)
+    }
+}
+impl AddAssign for PDFx4 {
+    fn add_assign(&mut self, rhs: PDFx4) {
+        self.0 += rhs.0;
+    }
+}
+
+impl Mul<f32> for PDFx4 {
+    type Output = PDFx4;
+    fn mul(self, rhs: f32) -> Self::Output {
+        PDFx4::from(self.0 * rhs)
+    }
+}
+impl Mul<PDFx4> for f32 {
+    type Output = PDFx4;
+    fn mul(self, rhs: PDFx4) -> Self::Output {
+        PDFx4::from(self * rhs.0)
+    }
+}
+
+impl Mul for PDFx4 {
+    type Output = PDFx4;
+    fn mul(self, rhs: PDFx4) -> Self::Output {
+        PDFx4::from(self.0 * rhs.0)
+    }
+}
+
+impl MulAssign for PDFx4 {
+    fn mul_assign(&mut self, other: PDFx4) {
+        self.0 = self.0 * other.0
+    }
+}
+impl Div<f32> for PDFx4 {
+    type Output = PDFx4;
+    fn div(self, rhs: f32) -> Self::Output {
+        PDFx4::from(self.0 / rhs)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct Ray {
     pub origin: Point3,

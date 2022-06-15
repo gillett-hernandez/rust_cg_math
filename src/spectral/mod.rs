@@ -2,6 +2,12 @@ use crate::color::XYZColor;
 use crate::misc::gaussian;
 use crate::*;
 
+mod hw;
+mod sw;
+
+pub use hw::{HeroEnergy, HeroWavelength};
+pub use sw::{SingleEnergy, SingleWavelength};
+
 use ordered_float::OrderedFloat;
 use packed_simd::f32x4;
 use serde::{Deserialize, Serialize};
@@ -10,154 +16,6 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);
 pub const BOUNDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(380.0, 780.0);
-
-#[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
-pub struct SingleEnergy(pub f32);
-
-impl SingleEnergy {
-    pub fn new(energy: f32) -> Self {
-        SingleEnergy { 0: energy }
-    }
-    pub const ZERO: SingleEnergy = SingleEnergy { 0: 0.0 };
-    pub const ONE: SingleEnergy = SingleEnergy { 0: 1.0 };
-    pub fn is_nan(&self) -> bool {
-        self.0.is_nan()
-    }
-}
-impl Add for SingleEnergy {
-    type Output = SingleEnergy;
-    fn add(self, rhs: SingleEnergy) -> Self::Output {
-        SingleEnergy::new(self.0 + rhs.0)
-    }
-}
-impl AddAssign for SingleEnergy {
-    fn add_assign(&mut self, rhs: SingleEnergy) {
-        self.0 += rhs.0;
-    }
-}
-
-impl Mul<f32> for SingleEnergy {
-    type Output = SingleEnergy;
-    fn mul(self, rhs: f32) -> Self::Output {
-        SingleEnergy::new(self.0 * rhs)
-    }
-}
-impl Mul<SingleEnergy> for f32 {
-    type Output = SingleEnergy;
-    fn mul(self, rhs: SingleEnergy) -> Self::Output {
-        SingleEnergy::new(self * rhs.0)
-    }
-}
-
-impl Mul for SingleEnergy {
-    type Output = SingleEnergy;
-    fn mul(self, rhs: SingleEnergy) -> Self::Output {
-        SingleEnergy::new(self.0 * rhs.0)
-    }
-}
-
-impl MulAssign for SingleEnergy {
-    fn mul_assign(&mut self, other: SingleEnergy) {
-        self.0 = self.0 * other.0
-    }
-}
-
-impl MulAssign<f32> for SingleEnergy {
-    fn mul_assign(&mut self, other: f32) {
-        self.0 = self.0 * other
-    }
-}
-
-impl Div<f32> for SingleEnergy {
-    type Output = SingleEnergy;
-    fn div(self, rhs: f32) -> Self::Output {
-        SingleEnergy::new(self.0 / rhs)
-    }
-}
-
-impl From<f32> for SingleEnergy {
-    fn from(value: f32) -> Self {
-        SingleEnergy::new(value)
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct SingleWavelength {
-    pub lambda: f32,
-    pub energy: SingleEnergy,
-}
-
-impl SingleWavelength {
-    pub const fn new(lambda: f32, energy: SingleEnergy) -> SingleWavelength {
-        SingleWavelength { lambda, energy }
-    }
-
-    pub fn new_from_range(x: f32, bounds: Bounds1D) -> Self {
-        SingleWavelength::new(bounds.lower + x * bounds.span(), SingleEnergy::ZERO)
-    }
-
-    pub fn with_energy(&self, energy: SingleEnergy) -> Self {
-        SingleWavelength::new(self.lambda, energy)
-    }
-
-    pub fn replace_energy(&self, energy: f32) -> Self {
-        self.with_energy(SingleEnergy::new(energy))
-    }
-
-    pub const BLACK: SingleWavelength = SingleWavelength::new(0.0, SingleEnergy::ZERO);
-}
-
-impl Mul<f32> for SingleWavelength {
-    type Output = SingleWavelength;
-    fn mul(self, other: f32) -> SingleWavelength {
-        self.with_energy(self.energy * other)
-    }
-}
-
-impl Mul<SingleWavelength> for f32 {
-    type Output = SingleWavelength;
-    fn mul(self, other: SingleWavelength) -> SingleWavelength {
-        other.with_energy(self * other.energy)
-    }
-}
-
-impl Mul<XYZColor> for SingleWavelength {
-    type Output = SingleWavelength;
-    fn mul(self, _xyz: XYZColor) -> SingleWavelength {
-        // let lambda = other.wavelength;
-        // let other_as_color: XYZColor = other.into();
-        // other_as_color gives us the x y and z values for other
-        // self.with_energy(self.energy * xyz.y())
-        unimplemented!()
-    }
-}
-
-impl Div<f32> for SingleWavelength {
-    type Output = SingleWavelength;
-    fn div(self, other: f32) -> SingleWavelength {
-        self.with_energy(self.energy / other)
-    }
-}
-
-impl DivAssign<f32> for SingleWavelength {
-    fn div_assign(&mut self, other: f32) {
-        self.energy = self.energy / other;
-    }
-}
-
-impl Mul<SingleEnergy> for SingleWavelength {
-    type Output = SingleWavelength;
-    fn mul(self, rhs: SingleEnergy) -> Self::Output {
-        self.with_energy(self.energy * rhs)
-    }
-}
-
-impl Mul<SingleWavelength> for SingleEnergy {
-    type Output = SingleWavelength;
-    fn mul(self, rhs: SingleWavelength) -> Self::Output {
-        rhs.with_energy(self * rhs.energy)
-    }
-}
 
 pub fn x_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 1.056, 5998.0, 379.0, 310.0)
@@ -175,6 +33,22 @@ pub fn z_bar(angstroms: f32) -> f32 {
         + gaussian(angstroms.into(), 0.681, 4590.0, 260.0, 138.0)) as f32
 }
 
+pub fn x_bar_f32x4(angstroms: f32x4) -> f32x4 {
+    gaussian_f32x4(angstroms, 1.056, 5998.0, 379.0, 310.0)
+        + gaussian_f32x4(angstroms, 0.362, 4420.0, 160.0, 267.0)
+        + gaussian_f32x4(angstroms, -0.065, 5011.0, 204.0, 262.0)
+}
+
+pub fn y_bar_f32x4(angstroms: f32x4) -> f32x4 {
+    gaussian_f32x4(angstroms, 0.821, 5688.0, 469.0, 405.0)
+        + gaussian_f32x4(angstroms, 0.286, 5309.0, 163.0, 311.0)
+}
+
+pub fn z_bar_f32x4(angstroms: f32x4) -> f32x4 {
+    gaussian_f32x4(angstroms, 1.217, 4370.0, 118.0, 360.0)
+        + gaussian_f32x4(angstroms, 0.681, 4590.0, 260.0, 138.0)
+}
+
 impl From<SingleWavelength> for XYZColor {
     fn from(swss: SingleWavelength) -> Self {
         // convert to Angstroms. 10 Angstroms == 1nm
@@ -184,6 +58,18 @@ impl From<SingleWavelength> for XYZColor {
             swss.energy.0 * x_bar(angstroms),
             swss.energy.0 * y_bar(angstroms),
             swss.energy.0 * z_bar(angstroms),
+        )
+    }
+}
+
+impl From<HeroWavelength> for XYZColor {
+    fn from(hwss: HeroWavelength) -> Self {
+        let angstroms = hwss.lambda * 10.0;
+
+        XYZColor::new(
+            (x_bar_f32x4(angstroms) * hwss.energy.0).sum(),
+            (y_bar_f32x4(angstroms) * hwss.energy.0).sum(),
+            (z_bar_f32x4(angstroms) * hwss.energy.0).sum(),
         )
     }
 }
@@ -277,14 +163,21 @@ pub struct CDF {
 }
 
 pub trait SpectralPowerDistributionFunction {
-    fn evaluate(&self, lambda: f32) -> f32;
     fn evaluate_power(&self, lambda: f32) -> f32;
-    // note: sample power
+    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4;
+    fn evaluate(&self, lambda: f32) -> f32;
+
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
     ) -> (SingleWavelength, PDF);
+
+    fn sample_power_and_pdf_hero(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (HeroWavelength, PDFx4);
     fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool)
         -> f32;
     fn convert_to_xyz(
@@ -440,6 +333,95 @@ impl SpectralPowerDistributionFunction for SPD {
             }
         }
     }
+
+    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4 {
+        match &self {
+            SPD::Const(v) => f32x4::splat(v.max(0.0)),
+            SPD::Linear {
+                signal,
+                bounds,
+                mode,
+            } => {
+                let step_size = bounds.span() / (signal.len() as f32);
+                let index = ((lambda - bounds.lower) / step_size);
+                let left = f32x4::new(
+                    signal[index.extract(0) as usize],
+                    signal[index.extract(1) as usize],
+                    signal[index.extract(2) as usize],
+                    signal[index.extract(3) as usize],
+                );
+                let squeeze = |idx: usize| {
+                    if idx + 1 < signal.len() {
+                        signal[idx + 1]
+                    } else {
+                        signal[idx]
+                    }
+                };
+                let right = f32x4::new(
+                    squeeze(index.extract(0) as usize),
+                    squeeze(index.extract(1) as usize),
+                    squeeze(index.extract(2) as usize),
+                    squeeze(index.extract(3) as usize),
+                );
+                let t = (lambda - (bounds.lower + index * step_size)) / step_size;
+                // println!("t is {}", t);
+                match mode {
+                    InterpolationMode::Linear => (1.0 - t) * left + t * right,
+                    InterpolationMode::Nearest => t.lt(f32x4::splat(0.5)).select(left, right),
+                    InterpolationMode::Cubic => {
+                        let t2 = 2.0 * t;
+                        let one_sub_t = 1.0 - t;
+                        let h00 = (1.0 + t2) * one_sub_t * one_sub_t;
+                        let h01 = t * t * (3.0 - t2);
+                        h00 * left + h01 * right
+                    }
+                }
+            }
+            SPD::Polynomial {
+                xoffset,
+                coefficients,
+            } => {
+                let mut val = f32x4::splat(0.0);
+                let tmp_lambda = lambda - *xoffset;
+                for (i, &coef) in coefficients.iter().enumerate() {
+                    val += coef * tmp_lambda.powf(f32x4::splat(i as f32));
+                }
+                val
+            }
+
+            SPD::Cauchy { a, b } => *a + *b / (lambda * lambda),
+            SPD::Exponential { signal } => {
+                let mut val = f32x4::splat(0.0);
+                for &(offset, sigma1, sigma2, multiplier) in signal {
+                    val += gaussian_f32x4(lambda, multiplier, offset, sigma1, sigma2);
+                }
+                val
+            }
+            SPD::InverseExponential { signal } => {
+                let mut val = f32x4::splat(1.0);
+                for &(offset, sigma1, sigma2, multiplier) in signal {
+                    val -= gaussian_f32x4(lambda, multiplier, offset, sigma1, sigma2);
+                }
+                val.max(f32x4::splat(0.0))
+            }
+
+            SPD::Blackbody { temperature, boost } => {
+                let bbd = blackbody_f32x4(*temperature, lambda);
+                if *boost == 0.0 {
+                    bbd
+                } else {
+                    // renormalize blackbody spectra so that it's all between 0 and 1, then multiply by boost.
+                    *boost * bbd / blackbody(*temperature, max_blackbody_lambda(*temperature))
+                }
+            }
+            _ => f32x4::new(
+                self.evaluate_power(lambda.extract(0)),
+                self.evaluate_power(lambda.extract(1)),
+                self.evaluate_power(lambda.extract(2)),
+                self.evaluate_power(lambda.extract(3)),
+            ),
+        }
+    }
     fn evaluate(&self, lambda: f32) -> f32 {
         // use the same curves as power distributions for reflectance functions, but cap it to 1.0 so no energy is ever added
         self.evaluate_power(lambda).min(1.0)
@@ -455,6 +437,23 @@ impl SpectralPowerDistributionFunction for SPD {
                 (
                     ws.replace_energy(self.evaluate_power(ws.lambda)),
                     PDF::from(1.0 / wavelength_range.span()), // uniform distribution
+                )
+            }
+        }
+    }
+    fn sample_power_and_pdf_hero(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (HeroWavelength, PDFx4) {
+        // since this is being called on an SPD arbitrary, there's no tabulated CDF data to indicate where peaks are in this distribution.
+        // could sample using stochastic MIS or something to adjust the pdf, but for now use uniform sampling.
+        match &self {
+            _ => {
+                let ws = HeroWavelength::new_from_range(sample.x, wavelength_range);
+                (
+                    ws.replace_energy(self.evaluate_power_hero(ws.lambda)),
+                    PDFx4::from(f32x4::splat(1.0 / wavelength_range.span())), // uniform distribution
                 )
             }
         }
@@ -486,6 +485,9 @@ impl SpectralPowerDistributionFunction for CDF {
     }
     fn evaluate_power(&self, lambda: f32) -> f32 {
         self.pdf.evaluate_power(lambda)
+    }
+    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4 {
+        self.pdf.evaluate_power_hero(lambda)
     }
     fn sample_power_and_pdf(
         &self,
@@ -568,8 +570,29 @@ impl SpectralPowerDistributionFunction for CDF {
                     PDF::from(power / self.cdf_integral),
                 )
             }
+            // should this be self.pdf.sample_power_and_pdf?
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
+    }
+    fn sample_power_and_pdf_hero(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (HeroWavelength, PDFx4) {
+        // let hero = HeroWavelength::new_from_range(sample.x, wavelength_range);
+        let (sw, pdf) = self.sample_power_and_pdf(wavelength_range, sample);
+        let transformed_sample =
+            Sample1D::new((sw.lambda - wavelength_range.lower) / wavelength_range.span());
+        let mut hw = HeroWavelength::new_from_range(transformed_sample.x, wavelength_range);
+        hw.energy.0 = hw.energy.0.replace(0, sw.energy.0);
+
+        for i in 1..4 {
+            hw.energy.0 = hw
+                .energy
+                .0
+                .replace(i, self.pdf.evaluate_power(hw.lambda.extract(i)));
+        }
+        (hw, PDFx4::from(hw.energy.0) / self.cdf_integral)
     }
     fn evaluate_integral(
         &self,
@@ -590,6 +613,7 @@ impl From<SPD> for CDF {
                 bounds,
                 mode,
             } => {
+                // converting linear curve to CDF, easy enough since you have the raw signal
                 let mut cdf_signal = signal.clone();
                 let mut s = 0.0;
                 let step_size = bounds.span() / (signal.len() as f32);
@@ -609,6 +633,7 @@ impl From<SPD> for CDF {
                 }
             }
             _ => {
+                // converting arbitrary curve to CDF, need to sample to compute integral and such.
                 let mut cdf_signal = Vec::new();
                 let mut s = 0.0;
                 let num_samples = 400;
@@ -629,10 +654,6 @@ impl From<SPD> for CDF {
                     },
                     cdf_integral: s,
                 }
-                // CDF {
-                // pdf: curve.clone(),
-                // cdf: curve.clone(),
-                // cdf_integral: curve.evaluate_integral(EXTENDED_VISIBLE_RANGE, 1.0),,
             }
         }
     }
