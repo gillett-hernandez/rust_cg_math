@@ -53,7 +53,6 @@ pub fn max_blackbody_lambda(temp: f32) -> f32 {
 // theta = azimuthal angle
 // phi = inclination, i.e. angle measured from +Z. the elevation angle would be pi/2 - phi
 
-
 pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
     let theta = (uv.0 - 0.5) * 2.0 * PI;
     let phi = uv.1 * PI;
@@ -88,12 +87,12 @@ mod test {
     #[test]
     fn test_uv_to_direction() {
         let mut center = Vec3::ZERO;
-        let N = 100;
-        for _ in 0..N {
+        let n = 100;
+        for _ in 0..n {
             let uv = (rand::random::<f32>(), rand::random::<f32>());
             let direction = uv_to_direction(uv);
             println!("{:?} {:?}", direction, uv);
-            center = center + direction / N as f32;
+            center = center + direction / n as f32;
         }
         println!("{:?}", center);
     }

@@ -1,10 +1,5 @@
 use crate::color::XYZColor;
-use crate::misc::gaussian;
 use crate::*;
-
-use ordered_float::OrderedFloat;
-use packed_simd::f32x4;
-use serde::{Deserialize, Serialize};
 
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
 

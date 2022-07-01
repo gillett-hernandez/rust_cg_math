@@ -3,6 +3,7 @@ extern crate packed_simd;
 
 mod bounds;
 mod color;
+pub mod curves;
 mod misc;
 mod point;
 mod random;
@@ -18,9 +19,10 @@ pub use misc::*;
 pub use point::Point3;
 pub use random::*;
 pub use sample::*;
-pub use spectral::{
-    InterpolationMode, SingleEnergy, SingleWavelength, SpectralPowerDistributionFunction, CDF, SPD,
-};
+pub use spectral::{SingleEnergy, SingleWavelength};
+
+pub use curves::{Curve, SpectralPowerDistributionFunction, CDF};
+
 pub use tangent_frame::TangentFrame;
 pub use transform::*;
 pub use vec::{Axis, Vec3};
