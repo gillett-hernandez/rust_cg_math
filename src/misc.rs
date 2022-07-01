@@ -49,20 +49,27 @@ pub fn max_blackbody_lambda(temp: f32) -> f32 {
     2.8977721e-3 / (temp * 1e-9)
 }
 
+//----------------------------------------------------------------------
+// theta = azimuthal angle
+// phi = inclination, i.e. angle measured from +Z. the elevation angle would be pi/2 - phi
+
+
 pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
-    let theta = uv.1 * PI;
-    let phi = (uv.0 - 0.5) * 2.0 * PI;
+    let theta = (uv.0 - 0.5) * 2.0 * PI;
+    let phi = uv.1 * PI;
+
     let (sin_theta, cos_theta) = theta.sin_cos();
     let (sin_phi, cos_phi) = phi.sin_cos();
-    let (x, y, z) = (sin_theta * cos_phi, sin_theta * sin_phi, cos_theta);
+
+    let (x, y, z) = (sin_phi * cos_theta, sin_phi * sin_theta, cos_phi);
     Vec3::new(x, y, z)
 }
 
 pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
-    let phi = direction.y().atan2(direction.x());
-    let theta = direction.z().acos();
-    let u = phi / 2.0 / PI + 0.5;
-    let v = theta / PI;
+    let theta = direction.y().atan2(direction.x());
+    let phi = direction.z().acos();
+    let u = theta / 2.0 / PI + 0.5;
+    let v = phi / PI;
     (u, v)
 }
 

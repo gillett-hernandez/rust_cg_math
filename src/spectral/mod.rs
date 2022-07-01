@@ -343,7 +343,7 @@ impl SpectralPowerDistributionFunction for SPD {
                 mode,
             } => {
                 let step_size = bounds.span() / (signal.len() as f32);
-                let index = ((lambda - bounds.lower) / step_size);
+                let index = (lambda - bounds.lower) / step_size;
                 let left = f32x4::new(
                     signal[index.extract(0) as usize],
                     signal[index.extract(1) as usize],
