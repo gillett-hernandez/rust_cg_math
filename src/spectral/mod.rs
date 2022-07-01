@@ -45,6 +45,54 @@ pub fn z_bar_f32x4(angstroms: f32x4) -> f32x4 {
         + gaussian_f32x4(angstroms, 0.681, 4590.0, 260.0, 138.0)
 }
 
+// traits
+
+pub trait SpectralPowerDistributionFunction {
+    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4;
+    // range: [0, infinty)
+    fn evaluate_power(&self, lambda: f32) -> f32;
+    // range: [0, 1]
+    fn evaluate_clamped(&self, lambda: f32) -> f32;
+
+    fn sample_power_and_pdf(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (SingleWavelength, PDF);
+
+    fn sample_power_and_pdf_hero(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (HeroWavelength, PDFx4);
+
+    fn convert_to_xyz(
+        &self,
+        integration_bounds: Bounds1D,
+        step_size: f32,
+        clamped: bool,
+    ) -> XYZColor {
+        let iterations = (integration_bounds.span() / step_size) as usize;
+        let mut sum: XYZColor = XYZColor::ZERO;
+        for i in 0..iterations {
+            let lambda = integration_bounds.lower + (i as f32) * step_size;
+            let angstroms = lambda * 10.0;
+            let val = if clamped {
+                self.evaluate_clamped(lambda)
+            } else {
+                self.evaluate_power(lambda)
+            };
+            sum.0 += f32x4::new(
+                val * x_bar(angstroms),
+                val * y_bar(angstroms),
+                val * z_bar(angstroms),
+                0.0,
+            ) * step_size;
+        }
+        sum
+    }
+}
+
 impl From<SingleWavelength> for XYZColor {
     fn from(swss: SingleWavelength) -> Self {
         // convert to Angstroms. 10 Angstroms == 1nm

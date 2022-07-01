@@ -19,9 +19,9 @@ pub use misc::*;
 pub use point::Point3;
 pub use random::*;
 pub use sample::*;
-pub use spectral::{SingleEnergy, SingleWavelength};
+pub use spectral::{SingleEnergy, SingleWavelength, SpectralPowerDistributionFunction};
 
-pub use curves::{Curve, SpectralPowerDistributionFunction, CDF};
+pub use curves::{Curve, CurveWithCDF};
 
 pub use tangent_frame::TangentFrame;
 pub use transform::*;

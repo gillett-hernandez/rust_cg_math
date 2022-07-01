@@ -1,14 +1,17 @@
-use crate::color::XYZColor;
 use crate::{
     blackbody, blackbody_f32x4, gaussian_f32x4, gaussianf32, max_blackbody_lambda, Bounds1D, PDFx4,
     Sample1D, PDF,
 };
 
-use crate::spectral::{x_bar, y_bar, z_bar, HeroWavelength, SingleWavelength};
+use crate::spectral::{HeroWavelength, SingleWavelength, SpectralPowerDistributionFunction};
 
 use ordered_float::OrderedFloat;
 use packed_simd::f32x4;
 use serde::{Deserialize, Serialize};
+
+const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
+
+// structs
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Op {
@@ -90,112 +93,26 @@ impl Curve {
         }
     }
 
-    #[allow(dead_code)]
-    fn to_cdf(&self, bounds: Bounds1D, resolution: usize) -> CDF {
-        match &self {
-            Curve::Linear {
-                signal,
-                bounds,
-                mode,
-            } => {
-                // converting linear curve to CDF, easy enough since you have the raw signal
-                let mut cdf_signal = signal.clone();
-                let mut s = 0.0;
-                let step_size = bounds.span() / (signal.len() as f32);
-                for (i, v) in signal.iter().enumerate() {
-                    s += v * step_size;
-                    cdf_signal[i] = s;
-                }
-                // println!("integral is {}, step_size was {}", s, step_size);
-                CDF {
-                    pdf: self.clone(),
-                    cdf: Curve::Linear {
-                        signal: cdf_signal,
-                        bounds: *bounds,
-                        mode: *mode,
-                    },
-                    cdf_integral: s,
-                }
-            }
-            _ => {
-                // converting arbitrary curve to CDF, need to sample to compute the integral.
-                // TODO: convert riemann sum to trapezoidal rule or something more accurate.
-                let mut cdf_signal = Vec::new();
-                let mut s = 0.0;
-                let step_size = bounds.span() / (resolution as f32);
-                for i in 0..resolution {
-                    let lambda = bounds.lower + (i as f32) * step_size;
-                    s += self.evaluate_power(lambda);
-                    cdf_signal.push(s);
-                }
-                CDF {
-                    pdf: self.clone(),
-                    cdf: Curve::Linear {
-                        signal: cdf_signal,
-                        mode: InterpolationMode::Cubic,
-                        bounds,
-                    },
-                    cdf_integral: s,
-                }
-            }
+    pub fn from_function<F>(mut func: F, samples: usize, domain: Bounds1D) -> Self
+    where
+        F: FnMut(f32) -> f32,
+    {
+        let lower = domain.lower;
+        let bin_size = domain.span() / samples as f32;
+        let mut values = Vec::new();
+        for i in 0..samples {
+            let pt = (i as f32 + 0.5) * bin_size + lower;
+            let value = func(pt);
+            values.push(value);
+        }
+        Curve::Linear {
+            signal: values,
+            bounds: domain,
+            mode: InterpolationMode::Cubic,
         }
     }
-}
 
-#[derive(Debug, Clone, Default)]
-pub struct CDF {
-    pub pdf: Curve,
-    pub cdf: Curve,
-    pub cdf_integral: f32,
-}
-
-pub trait SpectralPowerDistributionFunction {
-    fn evaluate_power(&self, lambda: f32) -> f32;
-    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4;
-    fn evaluate(&self, lambda: f32) -> f32;
-
-    fn sample_power_and_pdf(
-        &self,
-        wavelength_range: Bounds1D,
-        sample: Sample1D,
-    ) -> (SingleWavelength, PDF);
-
-    fn sample_power_and_pdf_hero(
-        &self,
-        wavelength_range: Bounds1D,
-        sample: Sample1D,
-    ) -> (HeroWavelength, PDFx4);
-    fn evaluate_integral(&self, integration_bounds: Bounds1D, step_size: f32, clamped: bool)
-        -> f32;
-    fn convert_to_xyz(
-        &self,
-        integration_bounds: Bounds1D,
-        step_size: f32,
-        clamped: bool,
-    ) -> XYZColor {
-        let iterations = (integration_bounds.span() / step_size) as usize;
-        let mut sum: XYZColor = XYZColor::ZERO;
-        for i in 0..iterations {
-            let lambda = integration_bounds.lower + (i as f32) * step_size;
-            let angstroms = lambda * 10.0;
-            let val = if clamped {
-                self.evaluate(lambda)
-            } else {
-                self.evaluate_power(lambda)
-            };
-            sum.0 += f32x4::new(
-                val * x_bar(angstroms),
-                val * y_bar(angstroms),
-                val * z_bar(angstroms),
-                0.0,
-            ) * step_size;
-        }
-        sum
-    }
-}
-
-impl SpectralPowerDistributionFunction for Curve {
-    fn evaluate_power(&self, lambda: f32) -> f32 {
+    fn evaluate(&self, x: f32) -> f32 {
         match &self {
             Curve::Const(v) => v.max(0.0),
             Curve::Linear {
@@ -203,18 +120,20 @@ impl SpectralPowerDistributionFunction for Curve {
                 bounds,
                 mode,
             } => {
-                if !bounds.contains(&lambda) {
-                    return 0.0;
+                if x <= bounds.lower {
+                    return *signal.first().unwrap();
+                } else if x >= bounds.upper {
+                    return *signal.last().unwrap();
                 }
                 let step_size = bounds.span() / (signal.len() as f32);
-                let index = ((lambda - bounds.lower) / step_size) as usize;
+                let index = ((x - bounds.lower) / step_size) as usize;
                 let left = signal[index];
                 let right = if index + 1 < signal.len() {
                     signal[index + 1]
                 } else {
                     return signal[index];
                 };
-                let t = (lambda - (bounds.lower + index as f32 * step_size)) / step_size;
+                let t = (x - (bounds.lower + index as f32 * step_size)) / step_size;
                 // println!("t is {}", t);
                 match mode {
                     InterpolationMode::Linear => (1.0 - t) * left + t * right,
@@ -239,7 +158,7 @@ impl SpectralPowerDistributionFunction for Curve {
                 coefficients,
             } => {
                 let mut val = 0.0;
-                let tmp_lambda = lambda - xoffset;
+                let tmp_lambda = x - xoffset;
                 for (i, &coef) in coefficients.iter().enumerate() {
                     val += coef * tmp_lambda.powi(i as i32);
                 }
@@ -248,7 +167,7 @@ impl SpectralPowerDistributionFunction for Curve {
             Curve::Tabulated { signal, mode } => {
                 // let result = signal.binary_search_by_key(lambda, |&(a, b)| a);
                 let index = match signal
-                    .binary_search_by_key(&OrderedFloat::<f32>(lambda), |&(a, _b)| {
+                    .binary_search_by_key(&OrderedFloat::<f32>(x), |&(a, _b)| {
                         OrderedFloat::<f32>(a)
                     }) {
                     Err(index) if index > 0 => index,
@@ -264,7 +183,7 @@ impl SpectralPowerDistributionFunction for Curve {
                     return right.1;
                 }
                 let left = signal[index - 1];
-                t = (lambda - left.0) / (right.0 - left.0);
+                t = (x - left.0) / (right.0 - left.0);
 
                 match mode {
                     InterpolationMode::Linear => (1.0 - t) * left.1 + t * right.1,
@@ -284,25 +203,25 @@ impl SpectralPowerDistributionFunction for Curve {
                     }
                 }
             }
-            Curve::Cauchy { a, b } => *a + *b / (lambda * lambda),
+            Curve::Cauchy { a, b } => *a + *b / (x * x),
             Curve::Exponential { signal } => {
                 let mut val = 0.0f32;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
-                    val += gaussianf32(lambda, multiplier, offset, sigma1, sigma2);
+                    val += gaussianf32(x, multiplier, offset, sigma1, sigma2);
                 }
                 val
             }
             Curve::InverseExponential { signal } => {
                 let mut val = 1.0f32;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
-                    val -= gaussianf32(lambda, multiplier, offset, sigma1, sigma2);
+                    val -= gaussianf32(x, multiplier, offset, sigma1, sigma2);
                 }
                 val.max(0.0)
             }
             Curve::Machine { seed, list } => {
                 let mut val = *seed;
                 for (op, spd) in list {
-                    let eval = spd.evaluate_power(lambda);
+                    let eval = spd.evaluate(x);
                     val = match op {
                         Op::Add => val + eval,
                         Op::Mul => val * eval,
@@ -312,15 +231,110 @@ impl SpectralPowerDistributionFunction for Curve {
             }
             Curve::Blackbody { temperature, boost } => {
                 if *boost == 0.0 {
-                    blackbody(*temperature, lambda)
+                    blackbody(*temperature, x)
                 } else {
-                    boost * blackbody(*temperature, lambda)
+                    boost * blackbody(*temperature, x)
                         / blackbody(*temperature, max_blackbody_lambda(*temperature))
                 }
             }
         }
     }
 
+    #[allow(dead_code)]
+    pub fn to_cdf(&self, bounds: Bounds1D, resolution: usize) -> CurveWithCDF {
+        // resolution is ignored if Curve variant is `Linear`
+        match &self {
+            Curve::Linear {
+                signal,
+                bounds,
+                mode,
+            } => {
+                // converting linear curve to CDF, easy enough since you have the raw signal
+                let mut cdf_signal = signal.clone();
+                let mut s = 0.0;
+                let step_size = bounds.span() / (signal.len() as f32);
+                for (i, v) in signal.iter().enumerate() {
+                    cdf_signal[i] = s;
+                    s += v * step_size;
+                }
+                cdf_signal.push(s);
+
+                // divide each entry in the cdf by the integral so that it ends at 1.0
+                cdf_signal.iter_mut().for_each(|e| *e /= s);
+                // println!("integral is {}, step_size was {}", s, step_size);
+                CurveWithCDF {
+                    pdf: self.clone(),
+                    cdf: Curve::Linear {
+                        signal: cdf_signal,
+                        bounds: *bounds,
+                        mode: *mode,
+                    },
+                    pdf_integral: s,
+                }
+            }
+            _ => {
+                // converting arbitrary curve to CDF, need to sample to compute the integral.
+                // TODO: convert riemann sum to trapezoidal rule or something more accurate.
+                let mut cdf_signal = Vec::new();
+                let mut s = 0.0;
+                let step_size = bounds.span() / (resolution as f32);
+                for i in 0..resolution {
+                    let lambda = bounds.lower + (i as f32) * step_size;
+                    s += self.evaluate(lambda);
+                    cdf_signal.push(s);
+                }
+
+                cdf_signal.iter_mut().for_each(|e| *e /= s);
+
+                CurveWithCDF {
+                    pdf: self.clone(),
+                    cdf: Curve::Linear {
+                        signal: cdf_signal,
+                        mode: InterpolationMode::Cubic,
+                        bounds,
+                    },
+                    pdf_integral: s,
+                }
+            }
+        }
+    }
+
+    pub fn evaluate_integral(
+        &self,
+        integration_bounds: Bounds1D,
+        samples: usize,
+        clamped: bool,
+    ) -> f32 {
+        // trapezoidal rule
+        let step_size = integration_bounds.span() / samples as f32;
+        let mut sum = 0.0;
+        let mut last_f = if clamped {
+            self.evaluate(integration_bounds.lower)
+                .clamp(0.0, 1.0 - std::f32::EPSILON)
+        } else {
+            self.evaluate(integration_bounds.lower)
+        };
+        for i in 1..=samples {
+            let x = integration_bounds.lower + (i as f32) * step_size;
+            let f_x = if clamped {
+                self.evaluate(x).clamp(0.0, 1.0 - std::f32::EPSILON)
+            } else {
+                self.evaluate(x)
+            };
+            sum += step_size * (last_f.min(f_x) + 0.5 * (last_f - f_x).abs());
+            last_f = f_x;
+        }
+        sum
+    }
+}
+
+impl SpectralPowerDistributionFunction for Curve {
+    fn evaluate_power(&self, lambda: f32) -> f32 {
+        self.evaluate(lambda)
+    }
+    fn evaluate_clamped(&self, lambda: f32) -> f32 {
+        self.evaluate(lambda).min(ONE_SUB_EPSILON)
+    }
     fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4 {
         match &self {
             Curve::Const(v) => f32x4::splat(v.max(0.0)),
@@ -402,16 +416,12 @@ impl SpectralPowerDistributionFunction for Curve {
                 }
             }
             _ => f32x4::new(
-                self.evaluate_power(lambda.extract(0)),
-                self.evaluate_power(lambda.extract(1)),
-                self.evaluate_power(lambda.extract(2)),
-                self.evaluate_power(lambda.extract(3)),
+                self.evaluate(lambda.extract(0)),
+                self.evaluate(lambda.extract(1)),
+                self.evaluate(lambda.extract(2)),
+                self.evaluate(lambda.extract(3)),
             ),
         }
-    }
-    fn evaluate(&self, lambda: f32) -> f32 {
-        // use the same curves as power distributions for reflectance functions, but cap it to 1.0 so no energy is ever added
-        self.evaluate_power(lambda).min(1.0)
     }
     fn sample_power_and_pdf(
         &self,
@@ -422,7 +432,7 @@ impl SpectralPowerDistributionFunction for Curve {
             _ => {
                 let ws = SingleWavelength::new_from_range(sample.x, wavelength_range);
                 (
-                    ws.replace_energy(self.evaluate_power(ws.lambda)),
+                    ws.replace_energy(self.evaluate(ws.lambda)),
                     PDF::from(1.0 / wavelength_range.span()), // uniform distribution
                 )
             }
@@ -445,33 +455,24 @@ impl SpectralPowerDistributionFunction for Curve {
             }
         }
     }
-    fn evaluate_integral(
-        &self,
-        integration_bounds: Bounds1D,
-        step_size: f32,
-        clamped: bool,
-    ) -> f32 {
-        let iterations = (integration_bounds.span() / step_size) as usize;
-        let mut sum = 0.0;
-        for i in 0..iterations {
-            let lambda = integration_bounds.lower + (i as f32) * step_size;
-            let val = if clamped {
-                self.evaluate(lambda)
-            } else {
-                self.evaluate_power(lambda)
-            };
-            sum += val * step_size;
-        }
-        sum
-    }
 }
 
-impl SpectralPowerDistributionFunction for CDF {
-    fn evaluate(&self, lambda: f32) -> f32 {
+#[derive(Debug, Clone, Default)]
+pub struct CurveWithCDF {
+    // pdf range is [0, infinity), though actual infinite values are not handled yet, and if they were it would be through special handling as dirac delta distributions
+    pub pdf: Curve,
+    // cdf ranges from 0 to 1
+    pub cdf: Curve,
+    // store pdf integral so that we don't have to normalize the `pdf` curve beforehand. instead, all samplings of the pdf when taken through the cdf should be normalized by dividing by pdf_integral.
+    pub pdf_integral: f32,
+}
+
+impl SpectralPowerDistributionFunction for CurveWithCDF {
+    fn evaluate_power(&self, lambda: f32) -> f32 {
         self.pdf.evaluate(lambda)
     }
-    fn evaluate_power(&self, lambda: f32) -> f32 {
-        self.pdf.evaluate_power(lambda)
+    fn evaluate_clamped(&self, lambda: f32) -> f32 {
+        self.pdf.evaluate(lambda).min(ONE_SUB_EPSILON)
     }
     fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4 {
         self.pdf.evaluate_power_hero(lambda)
@@ -484,7 +485,7 @@ impl SpectralPowerDistributionFunction for CDF {
         match &self.cdf {
             Curve::Const(v) => (
                 SingleWavelength::new(wavelength_range.sample(sample.x), (*v).into()),
-                (1.0 / wavelength_range.span()).into(),
+                (1.0 / self.pdf_integral).into(),
             ),
             Curve::Linear {
                 signal,
@@ -493,18 +494,17 @@ impl SpectralPowerDistributionFunction for CDF {
             } => {
                 let restricted_bounds = bounds.intersection(wavelength_range);
                 // remap sample.x to lie between the values that correspond to restricted_bounds.lower and restricted_bounds.upper
-                let lower_cdf_value =
-                    self.cdf.evaluate_power(restricted_bounds.lower - 0.0001) / self.cdf_integral;
-                let upper_cdf_value =
-                    self.cdf.evaluate_power(restricted_bounds.upper - 0.0001) / self.cdf_integral;
+                let lower_cdf_value = self.cdf.evaluate(restricted_bounds.lower);
+                let upper_cdf_value = self.cdf.evaluate(restricted_bounds.upper);
                 sample.x = lower_cdf_value + sample.x * (upper_cdf_value - lower_cdf_value);
+                // println!("{:?}", self.cdf);
                 // println!(
-                //     "remapped sample value to be {} which is between {} and {}",
+                //     "remapped sample value to be {:?} which is between {:?} and {:?}",
                 //     sample.x, lower_cdf_value, upper_cdf_value
                 // );
                 let maybe_index = signal
                     .binary_search_by_key(&OrderedFloat::<f32>(sample.x), |&a| {
-                        OrderedFloat::<f32>(a / self.cdf_integral)
+                        OrderedFloat::<f32>(a)
                     });
                 let lambda = match maybe_index {
                     Ok(index) | Err(index) => {
@@ -518,8 +518,8 @@ impl SpectralPowerDistributionFunction for CDF {
                             let right = bounds.lower
                                 + (index as f32) * (bounds.upper - bounds.lower)
                                     / (signal.len() as f32);
-                            let v0 = signal[index - 1] / self.cdf_integral;
-                            let v1 = signal[index] / self.cdf_integral;
+                            let v0 = signal[index - 1];
+                            let v1 = signal[index];
                             let t = if v0 != v1 {
                                 (sample.x - v0) / (v1 - v0)
                             } else {
@@ -549,12 +549,12 @@ impl SpectralPowerDistributionFunction for CDF {
                     }
                 };
                 // println!("lambda was {}", lambda);
-                let power = self.pdf.evaluate_power(lambda);
+                let power = self.pdf.evaluate(lambda);
 
                 // println!("power was {}", power);
                 (
                     SingleWavelength::new(lambda, power.into()),
-                    PDF::from(power / self.cdf_integral),
+                    PDF::from(power / self.pdf_integral),
                 )
             }
             // should this be self.pdf.sample_power_and_pdf?
@@ -578,36 +578,27 @@ impl SpectralPowerDistributionFunction for CDF {
             hw.energy.0 = hw
                 .energy
                 .0
-                .replace(i, self.pdf.evaluate_power(hw.lambda.extract(i)));
+                .replace(i, self.pdf.evaluate(hw.lambda.extract(i)));
         }
         // TODO: reconsider what the pdf of the other wavelengths should be in this case.
         (hw, PDFx4::from(f32x4::splat(pdf.0)))
-    }
-    fn evaluate_integral(
-        &self,
-        integration_bounds: Bounds1D,
-        step_size: f32,
-        clamped: bool,
-    ) -> f32 {
-        self.pdf
-            .evaluate_integral(integration_bounds, step_size, clamped)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{spectral::BOUNDED_VISIBLE_RANGE, Sample1D};
+    use crate::{spectral::BOUNDED_VISIBLE_RANGE, Sample1D, Sampler, StratifiedSampler};
 
     use super::*;
 
     #[test]
     fn test_y_bar_spd() {
         let spd = Curve::y_bar();
-        assert!(spd.evaluate_power(550.0) == 0.99955124);
+        assert!(spd.evaluate(550.0) == 0.99955124);
     }
     #[test]
     fn test_cdf1() {
-        let cdf: CDF = Curve::Linear {
+        let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
                 6.0, 3.0, 1.0, 0.4,
@@ -629,7 +620,7 @@ mod test {
 
     #[test]
     fn test_cdf2() {
-        let cdf: CDF = Curve::Exponential {
+        let cdf: CurveWithCDF = Curve::Exponential {
             signal: vec![(400.0, 200.0, 200.0, 0.9), (600.0, 200.0, 300.0, 1.0)],
         }
         .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
@@ -647,7 +638,7 @@ mod test {
     #[test]
     fn test_cdf3() {
         // test sampling according to the CDF with narrowed bounds wrt the original signal bounds
-        let cdf: CDF = Curve::Linear {
+        let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
                 6.0, 3.0, 1.0, 0.4,
@@ -672,7 +663,7 @@ mod test {
         // test sampling according to the CDF with narrowed bounds in general
         let narrowed_bounds = Bounds1D::new(500.0, 600.0);
 
-        let cdf: CDF = Curve::Exponential {
+        let cdf: CurveWithCDF = Curve::Exponential {
             signal: vec![(400.0, 200.0, 200.0, 0.9), (600.0, 200.0, 300.0, 1.0)],
         }
         .to_cdf(narrowed_bounds, 100);
@@ -688,7 +679,7 @@ mod test {
 
     #[test]
     fn test_cdf_addition() {
-        let cdf1: CDF = Curve::Exponential {
+        let cdf1: CurveWithCDF = Curve::Exponential {
             signal: vec![(400.0, 100.0, 100.0, 0.9), (600.0, 100.0, 100.0, 1.0)],
         }
         .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
@@ -698,12 +689,12 @@ mod test {
             println!(
                 "{}, {}, {}",
                 lambda,
-                cdf1.pdf.evaluate_power(lambda),
-                cdf1.cdf.evaluate_power(lambda)
+                cdf1.pdf.evaluate(lambda),
+                cdf1.cdf.evaluate(lambda)
             );
         }
         println!();
-        let cdf2: CDF = Curve::Linear {
+        let cdf2: CurveWithCDF = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
                 6.0, 3.0, 1.0, 0.4,
@@ -718,13 +709,13 @@ mod test {
             println!(
                 "{}, {}, {}",
                 lambda,
-                cdf2.pdf.evaluate_power(lambda),
-                cdf2.cdf.evaluate_power(lambda)
+                cdf2.pdf.evaluate(lambda),
+                cdf2.cdf.evaluate(lambda)
             );
         }
         println!();
-        let integral1 = cdf1.cdf_integral;
-        let integral2 = cdf2.cdf_integral;
+        let integral1 = cdf1.pdf_integral;
+        let integral2 = cdf2.pdf_integral;
 
         let combined_spd = Curve::Machine {
             seed: 0.0,
@@ -737,18 +728,18 @@ mod test {
         };
 
         // let combined_spd
-        let combined_cdf = CDF {
+        let combined_cdf = CurveWithCDF {
             pdf: combined_spd,
             cdf: combined_cdf_curve,
-            cdf_integral: integral1 + integral2,
+            pdf_integral: integral1 + integral2,
         };
         for i in 0..100 {
             let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
             println!(
                 "{}, {}, {}",
                 lambda,
-                combined_cdf.pdf.evaluate_power(lambda),
-                combined_cdf.cdf.evaluate_power(lambda)
+                combined_cdf.pdf.evaluate(lambda),
+                combined_cdf.cdf.evaluate(lambda)
             );
         }
 
@@ -759,6 +750,58 @@ mod test {
 
             s += sampled.0.energy.0 / (sampled.1).0;
         }
-        println!("\n\n{} {}", s / 1000.0, combined_cdf.cdf_integral);
+        println!("\n\n{} {}", s / 1000.0, combined_cdf.pdf_integral);
+    }
+
+    #[test]
+    fn test_from_func() {
+        let bounds = Bounds1D::new(0.0, 1.0);
+        let curve = Curve::from_function(|x| x * x, 100, bounds);
+
+        let true_integral = |x: f32| x * x * x / 3.0;
+        println!(
+            "{}, {}",
+            true_integral(1.0) - true_integral(0.0),
+            curve.evaluate_integral(bounds, 100, false)
+        );
+    }
+
+    #[test]
+    fn test_cdf_from_func() {
+        let bounds = Bounds1D::new(0.0, 1.0);
+        let curve = Curve::from_function(|x| x * x, 100, bounds);
+
+        let true_integral = |x: f32| x * x * x / 3.0;
+        let true_integral = true_integral(1.0) - true_integral(0.0);
+        let cdf = curve.to_cdf(bounds, 100);
+
+        println!("pdf integral is {}", cdf.pdf_integral);
+
+        let samples = 100;
+        let mut estimate = 0.0;
+        let mut variance_pt_1 = 0.0;
+        let mut sampler = StratifiedSampler::new(20, 10, 10);
+
+        let mut min_sample_x = 1.0;
+        for _ in 0..samples {
+            let sample = if true {
+                Sample1D::new_random_sample()
+            } else {
+                sampler.draw_1d()
+            };
+            let (v, pdf) = cdf.sample_power_and_pdf(bounds, sample);
+            if v.lambda < min_sample_x {
+                min_sample_x = v.lambda;
+            }
+            estimate += v.energy.0 / pdf.0 / samples as f32;
+            println!("{}, {}, {}", v.lambda, v.energy.0, pdf.0);
+            variance_pt_1 += (v.energy.0 / pdf.0).powi(2) / samples as f32;
+        }
+        println!("estimate = {}, true_integral = {}", estimate, true_integral);
+        println!(
+            "variance = {:?}",
+            (variance_pt_1 - estimate.powi(2)) / (samples - 1) as f32
+        );
+        println!("lowest sample is {}", min_sample_x);
     }
 }
