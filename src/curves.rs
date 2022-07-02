@@ -112,7 +112,7 @@ impl Curve {
         }
     }
 
-    fn evaluate(&self, x: f32) -> f32 {
+    pub fn evaluate(&self, x: f32) -> f32 {
         match &self {
             Curve::Const(v) => v.max(0.0),
             Curve::Linear {
