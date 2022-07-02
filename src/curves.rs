@@ -93,7 +93,12 @@ impl Curve {
         }
     }
 
-    pub fn from_function<F>(mut func: F, samples: usize, domain: Bounds1D) -> Self
+    pub fn from_function<F>(
+        mut func: F,
+        samples: usize,
+        domain: Bounds1D,
+        mode: InterpolationMode,
+    ) -> Self
     where
         F: FnMut(f32) -> f32,
     {
@@ -108,7 +113,7 @@ impl Curve {
         Curve::Linear {
             signal: values,
             bounds: domain,
-            mode: InterpolationMode::Cubic,
+            mode,
         }
     }
 
@@ -756,7 +761,7 @@ mod test {
     #[test]
     fn test_from_func() {
         let bounds = Bounds1D::new(0.0, 1.0);
-        let curve = Curve::from_function(|x| x * x, 100, bounds);
+        let curve = Curve::from_function(|x| x * x, 100, bounds, InterpolationMode::Cubic);
 
         let true_integral = |x: f32| x * x * x / 3.0;
         println!(
@@ -769,7 +774,7 @@ mod test {
     #[test]
     fn test_cdf_from_func() {
         let bounds = Bounds1D::new(0.0, 1.0);
-        let curve = Curve::from_function(|x| x * x, 100, bounds);
+        let curve = Curve::from_function(|x| x * x, 100, bounds, InterpolationMode::Cubic);
 
         let true_integral = |x: f32| x * x * x / 3.0;
         let true_integral = true_integral(1.0) - true_integral(0.0);
