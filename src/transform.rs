@@ -66,8 +66,8 @@ impl Mul<Ray> for Matrix4x4 {
     type Output = Ray;
     fn mul(self, rhs: Ray) -> Self::Output {
         Ray {
-            origin: self * rhs.origin,
-            direction: self * rhs.direction,
+            origin: (self * rhs.origin),
+            direction: (self * rhs.direction).normalized(),
             ..rhs
         }
     }
