@@ -12,14 +12,10 @@ impl Point3 {
     pub const fn new(x: f32, y: f32, z: f32) -> Point3 {
         Point3(f32x4::new(x, y, z, 1.0))
     }
-    pub const fn from_raw(v: f32x4) -> Point3 {
-        Point3(v)
-    }
-    pub const ZERO: Point3 = Point3::from_raw(f32x4::new(0.0, 0.0, 0.0, 1.0));
-    pub const ORIGIN: Point3 = Point3::from_raw(f32x4::new(0.0, 0.0, 0.0, 1.0));
-    pub const INFINITY: Point3 = Point3::from_raw(f32x4::new(INFINITY, INFINITY, INFINITY, 1.0));
-    pub const NEG_INFINITY: Point3 =
-        Point3::from_raw(f32x4::new(-INFINITY, -INFINITY, -INFINITY, 1.0));
+    pub const ZERO: Point3 = Point3(f32x4::new(0.0, 0.0, 0.0, 1.0));
+    pub const ORIGIN: Point3 = Point3(f32x4::new(0.0, 0.0, 0.0, 1.0));
+    pub const INFINITY: Point3 = Point3(f32x4::new(INFINITY, INFINITY, INFINITY, 1.0));
+    pub const NEG_INFINITY: Point3 = Point3(f32x4::new(-INFINITY, -INFINITY, -INFINITY, 1.0));
     pub fn is_finite(&self) -> bool {
         !(self.0.is_nan().any() || self.0.is_infinite().any())
     }
@@ -59,7 +55,7 @@ impl Add<Vec3> for Point3 {
     type Output = Point3;
     fn add(self, other: Vec3) -> Point3 {
         // Point3::new(self.x + other.x, self.y + other.y, self.z + other.z)
-        Point3::from_raw(self.0 + other.0)
+        (self.0 + other.0).into()
     }
 }
 
@@ -74,7 +70,7 @@ impl Sub<Vec3> for Point3 {
     type Output = Point3;
     fn sub(self, other: Vec3) -> Point3 {
         // Point3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-        Point3::from_raw(self.0 - other.0)
+        (self.0 - other.0).into()
     }
 }
 
@@ -91,13 +87,19 @@ impl Sub for Point3 {
     type Output = Vec3;
     fn sub(self, other: Point3) -> Vec3 {
         // Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-        Vec3::from_raw((self.0 - other.0) * f32x4::new(1.0, 1.0, 1.0, 0.0))
+        Vec3((self.0 - other.0) * f32x4::new(1.0, 1.0, 1.0, 0.0))
     }
 }
 
 impl From<[f32; 3]> for Point3 {
     fn from(other: [f32; 3]) -> Point3 {
         Point3::new(other[0], other[1], other[2])
+    }
+}
+
+impl From<f32x4> for Point3 {
+    fn from(other: f32x4) -> Point3 {
+        Point3(other)
     }
 }
 

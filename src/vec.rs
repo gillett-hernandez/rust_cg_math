@@ -33,10 +33,7 @@ impl Vec3 {
         // Vec3 { x, y, z, w: 0.0 }
         Vec3(f32x4::new(x, y, z, 0.0))
     }
-    pub const fn from_raw(v: f32x4) -> Vec3 {
-        Vec3(v)
-    }
-    pub const ZERO: Vec3 = Vec3::from_raw(f32x4::splat(0.0));
+    pub const ZERO: Vec3 = Vec3(f32x4::splat(0.0));
     pub const MASK: f32x4 = f32x4::new(1.0, 1.0, 1.0, 0.0);
     pub const X: Vec3 = Vec3::new(1.0, 0.0, 0.0);
     pub const Y: Vec3 = Vec3::new(0.0, 1.0, 0.0);
@@ -95,21 +92,21 @@ impl MulAssign for Vec3 {
 impl Mul<f32> for Vec3 {
     type Output = Vec3;
     fn mul(self, other: f32) -> Vec3 {
-        Vec3::from_raw(self.0 * other)
+        Vec3(self.0 * other)
     }
 }
 
 impl Mul<Vec3> for f32 {
     type Output = Vec3;
     fn mul(self, other: Vec3) -> Vec3 {
-        Vec3::from_raw(self * other.0)
+        Vec3(self * other.0)
     }
 }
 
 impl Div<f32> for Vec3 {
     type Output = Vec3;
     fn div(self, other: f32) -> Vec3 {
-        Vec3::from_raw(self.0 / other)
+        Vec3(self.0 / other)
     }
 }
 
@@ -138,14 +135,14 @@ impl Div<f32> for Vec3 {
 impl Add for Vec3 {
     type Output = Vec3;
     fn add(self, other: Vec3) -> Vec3 {
-        Vec3::from_raw(self.0 + other.0)
+        Vec3(self.0 + other.0)
     }
 }
 
 impl Neg for Vec3 {
     type Output = Vec3;
     fn neg(self) -> Vec3 {
-        Vec3::from_raw(-self.0)
+        Vec3(-self.0)
     }
 }
 
@@ -158,7 +155,7 @@ impl Sub for Vec3 {
 
 impl From<f32> for Vec3 {
     fn from(s: f32) -> Vec3 {
-        Vec3::from_raw(f32x4::splat(s) * Vec3::MASK)
+        Vec3(f32x4::splat(s) * Vec3::MASK)
     }
 }
 
@@ -185,7 +182,7 @@ impl Vec3 {
 
     pub fn normalized(&self) -> Self {
         let norm = self.norm();
-        Vec3::from_raw(self.0 / norm)
+        Vec3(self.0 / norm)
     }
 }
 
@@ -195,10 +192,16 @@ impl From<[f32; 3]> for Vec3 {
     }
 }
 
+impl From<f32x4> for Vec3 {
+    fn from(other: f32x4) -> Vec3 {
+        Vec3(other)
+    }
+}
+
 impl From<Point3> for Vec3 {
     fn from(p: Point3) -> Self {
         // Vec3::new(p.x, p.y, p.z)
-        Vec3::from_raw(p.0.replace(3, 0.0))
+        Vec3(p.0.replace(3, 0.0))
     }
 }
 

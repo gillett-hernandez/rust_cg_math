@@ -132,6 +132,6 @@ impl Mul<RGBColor> for Vec3 {
 
 impl From<RGBColor> for Vec3 {
     fn from(c: RGBColor) -> Vec3 {
-        Vec3::from_raw(c.0)
+        Vec3(c.0)
     }
 }

@@ -37,7 +37,7 @@ impl Mul<Vec3> for Matrix4x4 {
 
         let result = row1 * v0 + row2 * v1 + row3 * v2 + row4 * v3;
 
-        Vec3::from_raw(result)
+        result.into()
     }
 }
 
@@ -58,7 +58,7 @@ impl Mul<Point3> for Matrix4x4 {
 
         let result = row1 * v0 + row2 * v1 + row3 * v2 + row4 * v3;
 
-        Point3::from_raw(result).normalize()
+        Point3(result).normalize()
     }
 }
 
@@ -212,7 +212,6 @@ impl Transform3 {
     // [ Tx Ty Tz        [ vx
     //   Bx By Bz    *     vy     =   [Tx * vx + Ty * vy + Tz * vz, ...]
     //   Nx Ny Nz ]        vz ]
-
 
     pub fn from_vector_stack(v0: f32x4, v1: f32x4, v2: f32x4) -> Self {
         let [m11, m12, m13, _]: [f32; 4] = v0.into();
@@ -445,8 +444,8 @@ mod tests {
 
         let matrix = Matrix4x4::from(n_translate);
         let point = nalgebra::Vector4::new(1.0, 2.0, 3.0, 1.0);
-        let simd_vec = Vec3::from_raw(f32x4::new(1.0, 2.0, 3.0, 0.0));
-        let simd_point = Point3::from_raw(f32x4::new(1.0, 2.0, 3.0, 1.0));
+        let simd_vec = Vec3(f32x4::new(1.0, 2.0, 3.0, 0.0));
+        let simd_point = Point3(f32x4::new(1.0, 2.0, 3.0, 1.0));
 
         let transform = Transform3::new_from_matrix(n_translate);
         let result1 = n_translate * point;
