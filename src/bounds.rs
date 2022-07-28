@@ -59,3 +59,15 @@ impl Bounds2D {
         (self.x.sample(x), self.y.sample(y))
     }
 }
+
+impl From<(f32, f32)> for Bounds1D {
+    fn from(mut bounds: (f32, f32)) -> Self {
+        // swap if in the wrong order
+        bounds = if bounds.0 > bounds.1 {
+            (bounds.1, bounds.0)
+        } else {
+            bounds
+        };
+        Self::new(bounds.0, bounds.1)
+    }
+}
