@@ -67,8 +67,8 @@ impl Vec3 {
     pub fn w(&self) -> f32 {
         unsafe { self.0.extract_unchecked(3) }
     }
-    pub fn as_tuple(&self) -> (f32, f32, f32) {
-        (self.x(), self.y(), self.z())
+    pub fn as_array(&self) -> [f32; 4] {
+        self.0.into()
     }
 }
 
@@ -189,6 +189,12 @@ impl Vec3 {
 impl From<[f32; 3]> for Vec3 {
     fn from(other: [f32; 3]) -> Vec3 {
         Vec3::new(other[0], other[1], other[2])
+    }
+}
+
+impl From<[f32; 4]> for Vec3 {
+    fn from(other: [f32; 4]) -> Vec3 {
+        Vec3(f32x4::from(other))
     }
 }
 
