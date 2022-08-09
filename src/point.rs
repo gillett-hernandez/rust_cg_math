@@ -40,8 +40,8 @@ impl Point3 {
         }
         self
     }
-    pub fn as_tuple(&self) -> (f32, f32, f32) {
-        (self.x(), self.y(), self.z())
+    pub fn as_array(&self) -> [f32; 4] {
+        self.0.into()
     }
 }
 
