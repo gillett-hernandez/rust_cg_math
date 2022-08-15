@@ -1,4 +1,4 @@
-use super::{Vec3, PI};
+use crate::prelude::*;
 use packed_simd::f32x4;
 
 pub fn power_heuristic(a: f32, b: f32) -> f32 {
@@ -75,7 +75,7 @@ pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{random::*, Sample2D};
+    use crate::{random::*, sample::Sample2D};
 
     #[test]
     fn test_direction_to_uv() {

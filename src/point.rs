@@ -1,4 +1,4 @@
-use super::Vec3;
+use crate::prelude::Vec3;
 // use packed_simd::{f32x4, f32x8};
 use packed_simd::f32x4;
 

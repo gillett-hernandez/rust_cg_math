@@ -1,4 +1,4 @@
-use super::random;
+use crate::prelude::*;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 
@@ -15,7 +15,7 @@ impl Sample1D {
         Sample1D { x }
     }
     pub fn new_random_sample() -> Self {
-        Sample1D::new(random())
+        Sample1D::new(debug_random())
     }
     pub fn choose<T>(mut self, split: f32, a: T, b: T) -> (Self, T) {
         debug_assert!(0.0 <= split && split <= 1.0);
@@ -48,7 +48,7 @@ impl Sample2D {
         Sample2D { x, y }
     }
     pub fn new_random_sample() -> Self {
-        Sample2D::new(random(), random())
+        Sample2D::new(debug_random(), debug_random())
     }
 }
 #[derive(Debug, Copy, Clone)]
@@ -63,7 +63,7 @@ impl Sample3D {
         Sample3D { x, y, z }
     }
     pub fn new_random_sample() -> Self {
-        Sample3D::new(random(), random(), random())
+        Sample3D::new(debug_random(), debug_random(), debug_random())
     }
 }
 

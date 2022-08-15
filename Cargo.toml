@@ -1,6 +1,6 @@
 [package]
 name = "math"
-version = "0.3.0"
+version = "1.0.0"
 authors = ["Gillett Hernandez <gillett.hernandez@gmail.com>"]
 edition = "2018"
 
@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 # itertools = "0.10.1"
+num-traits = "0.2.15"
 nalgebra = "0.31.0"
 num_cpus = "1.13.0"
 ordered-float = "3.0.0"

@@ -1,4 +1,4 @@
-use crate::*;
+use crate::prelude::*;
 
 use nalgebra;
 use packed_simd::{f32x16, f32x4};

@@ -1,6 +1,7 @@
-use crate::Vec3;
+
 use packed_simd::f32x4;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign};
+
 #[derive(Copy, Clone, Debug)]
 pub struct RGBColor(pub f32x4);
 
@@ -119,19 +120,5 @@ impl From<f32> for RGBColor {
 impl From<RGBColor> for f32x4 {
     fn from(v: RGBColor) -> f32x4 {
         v.0
-    }
-}
-
-impl Mul<RGBColor> for Vec3 {
-    type Output = RGBColor;
-    fn mul(self, other: RGBColor) -> RGBColor {
-        // RGBColor::new(self.x() * other.r, self.y() * other.g, self.z() * other.b)
-        RGBColor::from_raw(self.0 * other.0)
-    }
-}
-
-impl From<RGBColor> for Vec3 {
-    fn from(c: RGBColor) -> Vec3 {
-        Vec3(c.0)
     }
 }

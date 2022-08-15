@@ -1,5 +1,5 @@
 // use packed_simd::{f32x4, f32x8};
-use crate::Point3;
+use crate::point::Point3;
 
 use packed_simd::f32x4;
 use serde::{Deserialize, Serialize};

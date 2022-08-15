@@ -1,7 +1,7 @@
-use super::sample::{Sample2D, Sample3D};
-use super::{Vec3, PI};
+use crate::prelude::*;
 
-pub fn random() -> f32 {
+pub fn debug_random() -> f32 {
+    // uses thread local rng
     rand::random()
 }
 

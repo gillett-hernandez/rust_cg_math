@@ -1,17 +1,18 @@
-use crate::color::XYZColor;
-use crate::misc::gaussian;
-use crate::*;
+use crate::prelude::*;
 
 mod hw;
 mod sw;
 
-pub use hw::{HeroEnergy, HeroWavelength};
-pub use sw::{SingleEnergy, SingleWavelength};
+// pub use hw::{HeroEnergy, HeroWavelength};
+// pub use sw::{SingleEnergy, SingleWavelength};
 
 use packed_simd::f32x4;
 
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);
 pub const BOUNDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(380.0, 780.0);
+
+pub type SingleWavelength = WavelengthEnergy<f32, f32>;
+pub type HeroWavelength = WavelengthEnergy<f32x4, f32x4>;
 
 pub fn x_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 1.056, 5998.0, 379.0, 310.0)
@@ -47,73 +48,66 @@ pub fn z_bar_f32x4(angstroms: f32x4) -> f32x4 {
 
 // traits
 
-pub trait SpectralPowerDistributionFunction {
-    fn evaluate_power_hero(&self, lambda: f32x4) -> f32x4;
-    // range: [0, infinty)
-    fn evaluate_power(&self, lambda: f32) -> f32;
-    // range: [0, 1]
-    fn evaluate_clamped(&self, lambda: f32) -> f32;
+pub trait WavelengthEnergyTrait<L: Field, E: Field> {
+    fn new(lambda: L, energy: E) -> WavelengthEnergy<L, E> {
+        WavelengthEnergy { lambda, energy }
+    }
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<L, E>;
+}
 
-    fn sample_power_and_pdf(
-        &self,
-        wavelength_range: Bounds1D,
-        sample: Sample1D,
-    ) -> (SingleWavelength, PDF);
+// does a WavelengthEnergy with L != E make any sense?
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct WavelengthEnergy<L: Field, E: Field> {
+    pub lambda: L,
+    pub energy: E,
+}
 
-    fn sample_power_and_pdf_hero(
-        &self,
-        wavelength_range: Bounds1D,
-        sample: Sample1D,
-    ) -> (HeroWavelength, PDFx4);
+impl<L: Field, E: Field> WavelengthEnergy<L, E> {
+    pub fn replace_energy(self, e: E) -> Self {
+        Self { energy: e, ..self }
+    }
+}
 
-    fn convert_to_xyz(
-        &self,
-        integration_bounds: Bounds1D,
-        step_size: f32,
-        clamped: bool,
-    ) -> XYZColor {
-        let iterations = (integration_bounds.span() / step_size) as usize;
-        let mut sum: XYZColor = XYZColor::ZERO;
-        for i in 0..iterations {
-            let lambda = integration_bounds.lower + (i as f32) * step_size;
-            let angstroms = lambda * 10.0;
-            let val = if clamped {
-                self.evaluate_clamped(lambda)
-            } else {
-                self.evaluate_power(lambda)
-            };
-            sum.0 += f32x4::new(
-                val * x_bar(angstroms),
-                val * y_bar(angstroms),
-                val * z_bar(angstroms),
-                0.0,
-            ) * step_size;
+impl From<WavelengthEnergy<f32, f32>> for XYZColor {
+    fn from(we: WavelengthEnergy<f32, f32>) -> Self {
+        let angstroms = we.lambda * 10.0;
+        XYZColor::new(
+            we.energy * x_bar(angstroms),
+            we.energy * y_bar(angstroms),
+            we.energy * z_bar(angstroms),
+        )
+    }
+}
+
+impl From<WavelengthEnergy<f32x4, f32x4>> for XYZColor {
+    fn from(we: WavelengthEnergy<f32x4, f32x4>) -> Self {
+        let angstroms = we.lambda * 10.0;
+        XYZColor::new(
+            (we.energy * x_bar_f32x4(angstroms)).sum(),
+            (we.energy * y_bar_f32x4(angstroms)).sum(),
+            (we.energy * z_bar_f32x4(angstroms)).sum(),
+        )
+    }
+}
+
+impl WavelengthEnergyTrait<f32, f32> for WavelengthEnergy<f32, f32> {
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<f32, f32> {
+        WavelengthEnergy {
+            lambda: bounds.lower + sample * bounds.span(),
+            energy: 0.0,
         }
-        sum
     }
 }
 
-impl From<SingleWavelength> for XYZColor {
-    fn from(swss: SingleWavelength) -> Self {
-        // convert to Angstroms. 10 Angstroms == 1nm
-        let angstroms = swss.lambda * 10.0;
-
-        XYZColor::new(
-            swss.energy.0 * x_bar(angstroms),
-            swss.energy.0 * y_bar(angstroms),
-            swss.energy.0 * z_bar(angstroms),
-        )
-    }
-}
-
-impl From<HeroWavelength> for XYZColor {
-    fn from(hwss: HeroWavelength) -> Self {
-        let angstroms = hwss.lambda * 10.0;
-
-        XYZColor::new(
-            (x_bar_f32x4(angstroms) * hwss.energy.0).sum(),
-            (y_bar_f32x4(angstroms) * hwss.energy.0).sum(),
-            (z_bar_f32x4(angstroms) * hwss.energy.0).sum(),
-        )
+impl WavelengthEnergyTrait<f32x4, f32x4> for WavelengthEnergy<f32x4, f32x4> {
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<f32x4, f32x4> {
+        let hero = sample * bounds.span();
+        let delta = bounds.span() / 4.0;
+        let mult = f32x4::new(0.0, 1.0, 2.0, 3.0);
+        let wavelengths = bounds.lower + (hero + mult * delta);
+        let sub: f32x4 = wavelengths
+            .gt(f32x4::splat(bounds.upper))
+            .select(f32x4::splat(bounds.span()), f32x4::splat(0.0));
+        HeroWavelength::new(wavelengths - sub, f32x4::splat(0.0))
     }
 }
