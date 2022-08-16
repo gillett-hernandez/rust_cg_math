@@ -13,7 +13,9 @@ pub use crate::spectral::{
 };
 pub use crate::traits::*;
 
-pub use crate::curves::{Curve, CurveWithCDF, SpectralPowerDistributionFunction};
+pub use crate::curves::{
+    Curve, CurveWithCDF, InterpolationMode, SpectralPowerDistributionFunction,
+};
 
 pub use crate::tangent_frame::TangentFrame;
 pub use crate::transform::*;

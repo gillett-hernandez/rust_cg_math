@@ -25,12 +25,14 @@ impl<T: Field, M: Measure> PDF<T, M> {
 // deref, to make things easier. don't need to access pdf.0 anymore, just do *pdf
 impl<T: Field, M: Measure> Deref for PDF<T, M> {
     type Target = T;
+    #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.v
     }
 }
 
 impl<T: Field, M: Measure> DerefMut for PDF<T, M> {
+    #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.v
     }
@@ -69,13 +71,6 @@ impl<T: Field, M: Measure> Div for PDF<T, M> {
     }
 }
 
-// impl<T: Field, S: Scalar, M: Measure> Add for PDF<T, M> {
-//     type Output = Self;
-//     type Rhs = S;
-//     fn add(self, rhs: S) -> Self::Output {
-//         PDF::new(self.v + rhs.v)
-//     }
-// }
 impl<T: Field, S: Scalar, M: Measure> Mul<S> for PDF<T, M>
 where
     T: Mul<S, Output = T>,
