@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::traits::Uniform01;
 
 use crate::spectral::{
     x_bar, y_bar, z_bar, HeroWavelength, SingleWavelength, WavelengthEnergyTrait,
@@ -862,7 +863,7 @@ mod test {
         let mut s = 0.0;
         for _ in 0..100 {
             let (we, pdf): (_, PDF<f32, _>) =
-                cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
+                cdf.sample_power_and_pdf(narrowed_bounds, Sample1D::new_random_sample());
 
             s += we.energy / *pdf;
         }

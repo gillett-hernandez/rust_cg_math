@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use std::fmt::Debug;
-pub(crate) use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg};
+pub(crate) use std::ops::{Add, Div, Mul, Neg};
 
 pub trait Measure: Copy + Clone + Debug {}
 
@@ -74,5 +74,27 @@ pub trait Field:
     // examples would include f32 and f32x4
 }
 
+pub trait Scalar: Field {}
+
+pub trait ToScalar<T: Field, S: Scalar> {
+    fn convert(v: T) -> S;
+}
+
 impl Field for f32 {}
+impl Scalar for f32 {}
+
 impl Field for f32x4 {}
+
+impl ToScalar<f32x4, f32> for f32x4 {
+    #[inline(always)]
+    fn convert(v: f32x4) -> f32 {
+        v.extract(0)
+    }
+}
+impl ToScalar<f32, f32> for f32 {
+    // noop
+    #[inline(always)]
+    fn convert(v: f32) -> f32 {
+        v
+    }
+}

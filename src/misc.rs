@@ -75,7 +75,7 @@ pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{random::*, sample::Sample2D};
+    use crate::sample::Sample2D;
 
     #[test]
     fn test_direction_to_uv() {
@@ -89,7 +89,7 @@ mod test {
         let mut center = Vec3::ZERO;
         let n = 100;
         for _ in 0..n {
-            let uv = (rand::random::<f32>(), rand::random::<f32>());
+            let uv = (debug_random(), debug_random());
             let direction = uv_to_direction(uv);
             println!("{:?} {:?}", direction, uv);
             center = center + direction / n as f32;
@@ -99,7 +99,7 @@ mod test {
 
     #[test]
     fn test_bijectiveness_of_uv_direction() {
-        let uv = (rand::random::<f32>(), rand::random::<f32>());
+        let uv = (debug_random(), debug_random());
         let direction = uv_to_direction(uv);
         let uv2 = direction_to_uv(direction);
         assert!(uv == uv2, "{:?} {:?}", uv, uv2);

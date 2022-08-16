@@ -1,11 +1,5 @@
 use crate::prelude::*;
 
-mod hw;
-mod sw;
-
-// pub use hw::{HeroEnergy, HeroWavelength};
-// pub use sw::{SingleEnergy, SingleWavelength};
-
 use packed_simd::f32x4;
 
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);

@@ -3,6 +3,7 @@ use rand::seq::SliceRandom;
 use rand::{thread_rng, RngCore};
 
 use std::f32::EPSILON;
+// TODO: add measure generic like with pdf to define what measure a sample is obtained wrt
 
 #[derive(Debug, Copy, Clone)]
 pub struct Sample1D {
