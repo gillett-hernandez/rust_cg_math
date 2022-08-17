@@ -99,19 +99,32 @@ mod test {
 
     #[test]
     fn test_bijectiveness_of_uv_direction() {
-        let uv = (debug_random(), debug_random());
-        let direction = uv_to_direction(uv);
-        let uv2 = direction_to_uv(direction);
-        assert!(uv == uv2, "{:?} {:?}", uv, uv2);
+        let sub = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0, a.1 - b.1);
+        for _ in 0..1000000 {
+            let uv = (debug_random(), debug_random());
+            let direction = uv_to_direction(uv);
+            let uv2 = direction_to_uv(direction);
+            let abs_error = sub(uv, uv2);
+            let round_trip_error = abs_error.0.hypot(abs_error.1);
+            assert!(
+                round_trip_error < 0.0001,
+                "{:?} {:?}, {:?}",
+                uv,
+                uv2,
+                round_trip_error
+            );
 
-        let direction = random_on_unit_sphere(Sample2D::new_random_sample());
-        let uv = direction_to_uv(direction);
-        let direction2 = uv_to_direction(uv);
-        assert!(
-            (direction - direction2).norm() < 0.000001,
-            "{:?} {:?}",
-            direction,
-            direction2
-        );
+            let direction = random_on_unit_sphere(Sample2D::new_random_sample());
+            let uv = direction_to_uv(direction);
+            let direction2 = uv_to_direction(uv);
+            let round_trip_error = (direction - direction2).norm();
+            assert!(
+                round_trip_error < 0.0001,
+                "{:?} {:?}, {:?}",
+                direction,
+                direction2,
+                round_trip_error
+            );
+        }
     }
 }

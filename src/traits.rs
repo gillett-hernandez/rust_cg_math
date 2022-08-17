@@ -1,6 +1,6 @@
 use crate::prelude::*;
 pub(crate) use std::ops::{Add, Div, Mul, Neg};
-use std::{cmp::Ordering, fmt::Debug};
+use std::{cmp::Ordering, fmt::Debug, ops::{AddAssign, MulAssign}};
 
 // differential forms of various measures
 pub trait Measure: Copy + Clone + Debug {}
@@ -37,6 +37,9 @@ impl Measure for Uniform01 {}
 #[derive(Copy, Clone, Debug)]
 pub struct Throughput {}
 impl Measure for Throughput {}
+
+
+// TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
 
 // misc traits
 pub trait Abs {
@@ -175,7 +178,9 @@ impl CheckInf for f32x4 {
 
 pub trait Field:
     Add<Output = Self>
+    + AddAssign
     + Mul<Output = Self>
+    + MulAssign
     + Neg<Output = Self>
     + Div<Output = Self>
     + Abs
