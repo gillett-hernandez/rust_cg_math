@@ -1,6 +1,10 @@
 use crate::prelude::*;
 pub(crate) use std::ops::{Add, Div, Mul, Neg};
-use std::{cmp::Ordering, fmt::Debug, ops::{AddAssign, MulAssign}};
+use std::{
+    cmp::Ordering,
+    fmt::Debug,
+    ops::{AddAssign, MulAssign},
+};
 
 // differential forms of various measures
 pub trait Measure: Copy + Clone + Debug {}
@@ -37,7 +41,6 @@ impl Measure for Uniform01 {}
 #[derive(Copy, Clone, Debug)]
 pub struct Throughput {}
 impl Measure for Throughput {}
-
 
 // TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
 
@@ -188,41 +191,61 @@ pub trait Field:
     + Copy
     + PartialEq
     + MyPartialOrd
+    + CheckInf
+    + CheckNAN
     + Debug
 {
     // trait bound to represent data types that can be integrated over.
     // examples would include f32 and f32x4
     const ZERO: Self;
     const ONE: Self;
+    fn min(&self, other: Self) -> Self;
+    fn max(&self, other: Self) -> Self;
 }
 
 pub trait Scalar: Field + PartialOrd {}
 
 pub trait ToScalar<T: Field, S: Scalar> {
-    fn convert(v: T) -> S;
+    fn to_scalar(v: T) -> S;
 }
 
 impl Field for f32 {
     const ONE: Self = 1.0;
     const ZERO: Self = 0.0;
+    #[inline(always)]
+    fn max(&self, other: Self) -> Self {
+        f32::max(*self, other)
+    }
+    #[inline(always)]
+    fn min(&self, other: Self) -> Self {
+        f32::max(*self, other)
+    }
 }
 impl Scalar for f32 {}
 
 impl Field for f32x4 {
     const ONE: Self = f32x4::splat(1.0);
     const ZERO: Self = f32x4::splat(0.0);
+    #[inline(always)]
+    fn max(&self, other: Self) -> Self {
+        f32x4::max(*self, other)
+    }
+    #[inline(always)]
+    fn min(&self, other: Self) -> Self {
+        f32x4::min(*self, other)
+    }
 }
 
 impl ToScalar<f32x4, f32> for f32x4 {
     #[inline(always)]
-    fn convert(v: f32x4) -> f32 {
+    fn to_scalar(v: f32x4) -> f32 {
         v.extract(0)
     }
 }
 impl ToScalar<f32, f32> for f32 {
     // noop
     #[inline(always)]
-    fn convert(v: f32) -> f32 {
+    fn to_scalar(v: f32) -> f32 {
         v
     }
 }
