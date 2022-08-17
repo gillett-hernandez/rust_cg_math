@@ -205,8 +205,8 @@ pub trait Field:
 
 pub trait Scalar: Field + PartialOrd {}
 
-pub trait ToScalar<T: Field, S: Scalar> {
-    fn to_scalar(v: T) -> S;
+pub trait ToScalar<S: Scalar> {
+    fn to_scalar(&self) -> S;
 }
 
 impl Field for f32 {
@@ -236,16 +236,16 @@ impl Field for f32x4 {
     }
 }
 
-impl ToScalar<f32x4, f32> for f32x4 {
+impl ToScalar<f32> for f32x4 {
     #[inline(always)]
-    fn to_scalar(v: f32x4) -> f32 {
-        v.extract(0)
+    fn to_scalar(&self) -> f32 {
+        self.extract(0)
     }
 }
-impl ToScalar<f32, f32> for f32 {
+impl ToScalar<f32> for f32 {
     // noop
     #[inline(always)]
-    fn to_scalar(v: f32) -> f32 {
-        v
+    fn to_scalar(&self) -> f32 {
+        *self
     }
 }
