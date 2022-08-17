@@ -6,6 +6,8 @@ use std::{
     ops::{AddAssign, MulAssign},
 };
 
+// TODO: figure out if it's necessary to create a separate trait for the support of a measure,
+// i.e. R for Uniform01, or R^2 for Area, or H+ for Projected Solid Angle, etc
 // differential forms of various measures
 pub trait Measure: Copy + Clone + Debug {}
 
@@ -42,8 +44,6 @@ impl Measure for Uniform01 {}
 pub struct Throughput {}
 impl Measure for Throughput {}
 
-// TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
-
 // misc traits
 pub trait Abs {
     fn abs(self) -> Self;
@@ -63,27 +63,6 @@ impl Abs for f32x4 {
     }
 }
 
-pub trait One {
-    const ONE: Self;
-}
-pub trait Zero {
-    const ZERO: Self;
-}
-
-// impl One for f32 {
-//     const ONE: Self = 1.0f32;
-// }
-// impl One for f32x4 {
-//     const ONE: Self = f32x4::splat(1.0);
-// }
-
-// impl Zero for f32 {
-//     const ZERO: Self = 0.0f32;
-// }
-// impl Zero for f32x4 {
-//     const ZERO: Self = f32x4::splat(0.0);
-// }
-
 pub trait MyPartialOrd {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering>;
 }
@@ -96,7 +75,16 @@ impl MyPartialOrd for f32 {
 
 impl MyPartialOrd for f32x4 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.gt(*other).all() {
+        if self.eq(other) {
+            Some(Ordering::Equal)
+        } else if self.ge(*other).all() {
+            Some(Ordering::Greater)
+        } else if self.le(*other).all() {
+            Some(Ordering::Less)
+        } else {
+            None
+        }
+        /* if self.gt(*other).all() {
             Some(Ordering::Greater)
         } else if self.eq(other) {
             Some(Ordering::Equal)
@@ -104,7 +92,7 @@ impl MyPartialOrd for f32x4 {
             Some(Ordering::Less)
         } else {
             None
-        }
+        } */
     }
 }
 
@@ -273,5 +261,144 @@ impl FromScalar<f32> for f32 {
     #[inline(always)]
     fn from_scalar(v: f32) -> f32 {
         v
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::f32::consts::TAU;
+
+    use super::*;
+    // TODO: implement trait for PDF and Measure so that you can more easily construct a new PDF on a new measure from existing pdfs, i.e.
+
+    // subset of R^2
+    #[derive(Copy, Clone, Debug)]
+    struct DiskMeasure {}
+    impl Measure for DiskMeasure {}
+
+    type DiskPDF = PDF<f32, DiskMeasure>;
+    type Sampled1D = (Sample1D, PDF<f32, Uniform01>);
+    struct SampledDisk(pub Sample2D, pub DiskPDF);
+    impl SampledDisk {
+        pub fn new(sample0: Sampled1D, sample1: Sampled1D) -> Self {
+            let radial = sample0.0.x.sqrt();
+            let angle = sample1.0.x * TAU;
+            // jacobian matrix =
+            /*[
+                [ 1/(2sqrt(x)), 0],
+                [0, TAU]
+                jacobian determinant = PI / sqrt(x)
+            ]*/
+            let (sin, cos) = angle.sin_cos();
+            // this is using Sample2D in a very nonstandard manner relative to how i've used it so far, but yeah
+            let disk_pos = Sample2D::new(radial * cos, radial * sin);
+            let jacobian = PI * radial.recip();
+            Self(disk_pos, DiskPDF::new(jacobian * *sample0.1 * *sample1.1))
+        }
+    }
+
+    // TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
+    // ideas:
+    // implement some trait called Measurable
+    // that looks something like
+
+    trait MonteCarlo<D: Field, M: Measure>: Field + Div<PDF<D, M>, Output = Self> {}
+
+    // then we can define something like
+
+    impl Div<PDF<f32, Uniform01>> for f32 {
+        type Output = f32;
+        fn div(self, rhs: PDF<f32, Uniform01>) -> Self::Output {
+            self / *rhs
+        }
+    }
+    impl MonteCarlo<f32, Uniform01> for f32 {}
+
+    // impl Div<PDF<f32, Area>> for f32 {
+    //     type Output = f32;
+    //     fn div(self, rhs: PDF<f32, Area>) -> Self::Output {
+    //         self / *rhs
+    //     }
+    // }
+
+    // then if we want to measure the area under some function, we can express that integration problem using trait bounds
+    // this is somewhat generalized over what method is used to actually generate the samples
+
+    fn mc_integrate<DF, RF, M: Measure, F, Sampler, S>(
+        func: F,
+        bounds: Bounds1D,
+        mut sampler: Sampler,
+        samples: u16,
+    ) -> (RF, RF)
+    where
+        DF: Field,
+        RF: MonteCarlo<DF, Uniform01>
+            + Div<PDF<DF, M>, Output = RF>
+            + Div<RF, Output = RF>
+            + FromScalar<S>,
+        F: Fn(DF) -> RF,
+        Sampler: FnMut(Bounds1D, u16) -> (DF, PDF<DF, M>),
+        S: Scalar + From<u16>,
+    {
+        let mut estimate = RF::ZERO;
+        let mut sos_estimate = RF::ZERO;
+        let n = RF::from_scalar(samples.into());
+        for idx in 0..samples {
+            let (sample, pdf) = sampler(bounds, idx);
+            let fs = func(sample);
+            estimate += fs / pdf;
+            sos_estimate += fs * fs / pdf;
+        }
+        (estimate / n, sos_estimate / n)
+    }
+    use super::*;
+    #[test]
+    fn test_mc_integrate() {
+        let (estimate, square_estimate) = mc_integrate(
+            |x: f32| x * x * x,
+            Bounds1D::new(0.0, 1.0),
+            |b, _| {
+                // uniform sampling
+                let sample = b.sample(debug_random());
+                let pdf = 1.0 / b.span();
+                (sample, PDF::new(pdf))
+            },
+            100,
+        );
+        let variance = square_estimate - estimate * estimate;
+        println!("{:?}, var = {:?}", estimate, variance);
+
+        let (estimate, square_estimate) = mc_integrate(
+            |x: f32| x * x * x,
+            Bounds1D::new(0.0, 1.0),
+            |b, _| {
+                // importance sampling y=x
+
+                let c = b.span() / 2.0;
+
+                let u = debug_random();
+                let x = u.sqrt();
+                let sample = b.sample(x);
+                let pdf = x / c;
+                (sample, PDF::new(pdf))
+            },
+            100,
+        );
+        let variance = square_estimate - estimate * estimate;
+        println!("{:?}, var = {:?}", estimate, variance);
+
+        // let (estimate, square_estimate) = mc_integrate(
+        //     |x: f32| x * x * x,
+        //     Bounds1D::new(0.0, 1.0),
+        //     |b, _| {
+        //         // uniform sampling
+        //         let sample = b.sample(debug_random());
+        //         let pdf = 1.0 / b.span();
+        //         (sample, PDF::new(pdf))
+        //     },
+        //     100,
+        // );
+        // let variance = square_estimate - estimate * estimate;
+        // println!("{:?}, var = {:?}", estimate, variance);
     }
 }
