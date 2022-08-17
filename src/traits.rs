@@ -203,10 +203,22 @@ pub trait Field:
     fn max(&self, other: Self) -> Self;
 }
 
+// NOTE: the reason we have to implement these (ToScalar, FromScalar, CheckInf, CheckNAN, MyPartialCmp)
+// as custom traits instead of using From, Into, etc is because we can't directly implement From or Into on external types
+
+// due to rusts' rules on implementing traits
+// we're allowed to implement a local trait on external types, (FromScalar for f32x4)
+// or external traits on local types, (From<f32x4> for Vec3)
+// but not external traits on external types (From<f32> for f32x4)
+
 pub trait Scalar: Field + PartialOrd {}
 
 pub trait ToScalar<S: Scalar> {
     fn to_scalar(&self) -> S;
+}
+
+pub trait FromScalar<S: Scalar> {
+    fn from_scalar(v: S) -> Self;
 }
 
 impl Field for f32 {
@@ -247,5 +259,19 @@ impl ToScalar<f32> for f32 {
     #[inline(always)]
     fn to_scalar(&self) -> f32 {
         *self
+    }
+}
+
+impl FromScalar<f32> for f32x4 {
+    #[inline(always)]
+    fn from_scalar(v: f32) -> f32x4 {
+        f32x4::splat(v)
+    }
+}
+impl FromScalar<f32> for f32 {
+    // noop
+    #[inline(always)]
+    fn from_scalar(v: f32) -> f32 {
+        v
     }
 }
