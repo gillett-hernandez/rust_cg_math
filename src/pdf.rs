@@ -10,15 +10,18 @@ pub struct PDF<T: Field, M: Measure> {
     v: T,
     // TODO: determine if this should be PhantomData<*const M> or instead just M
     // just M would allow for M: Measure to be some arbitrary type
-    measure: PhantomData<*const M>,
+    measure: M,
 }
 
 impl<T: Field, M: Measure> PDF<T, M> {
     pub fn new(v: T) -> Self {
         Self {
             v,
-            measure: PhantomData,
+            measure: M::default(),
         }
+    }
+    pub fn new_with_measure(v: T, m: M) -> Self {
+        Self { v, measure: m }
     }
 }
 
@@ -41,10 +44,7 @@ impl<T: Field, M: Measure> DerefMut for PDF<T, M> {
 // impl From (and Into) when Measure can be inferred
 impl<T: Field, M: Measure> From<T> for PDF<T, M> {
     fn from(v: T) -> Self {
-        Self {
-            v,
-            measure: PhantomData,
-        }
+        Self::new(v)
     }
 }
 
@@ -52,14 +52,14 @@ impl<T: Field, M: Measure> Add for PDF<T, M> {
     type Output = Self;
     // must be under the same field and measure
     fn add(self, rhs: Self) -> Self::Output {
-        PDF::new(self.v + rhs.v)
+        PDF::new_with_measure(self.v + rhs.v, self.measure.combine(rhs.measure))
     }
 }
 impl<T: Field, M: Measure> Mul for PDF<T, M> {
     type Output = Self;
     // must be under the same field and measure
     fn mul(self, rhs: Self) -> Self::Output {
-        PDF::new(self.v * rhs.v)
+        PDF::new_with_measure(self.v * rhs.v, self.measure.combine(rhs.measure))
     }
 }
 impl<T: Field, M: Measure> Div for PDF<T, M> {
@@ -67,7 +67,7 @@ impl<T: Field, M: Measure> Div for PDF<T, M> {
     // FIXME if you divide two pdfs of the same measure, does that result in a dimensionless quantity? or is it still a pdf? not sure.
     type Output = Self;
     fn div(self, rhs: Self) -> Self::Output {
-        PDF::new(self.v / rhs.v)
+        PDF::new_with_measure(self.v / rhs.v, self.measure.combine(rhs.measure))
     }
 }
 
@@ -134,29 +134,36 @@ impl<T: Field> PDF<T, Area> {
     }
 }
 
+// impl<T> PDF<T, ProjectedSolidAngle> where T: Field {}
+impl<T: Field> PDF<T, ProjectedSolidAngle> {
+    fn convert_to_throughput(self, area_pdf: PDF<T, Area>) -> PDF<T, Throughput> {
+        (*area_pdf * *self).into()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     // TODO: come up with some tests that demonstrate monte carlo integration with change of variables using pdf conversions
     #[test]
     fn test_area_pdf() {
-        let area_pdf: PDF<f32, Area> = PDF::new(1.0);
-        let solid_angle = area_pdf.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 = area_pdf.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
+        let area_pdf_distant_object: PDF<f32, Area> = PDF::new(1.0);
+        let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
+        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
         let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
 
-        println!("{:?}", area_pdf);
+        println!("{:?}", area_pdf_distant_object);
         println!("{:?}", solid_angle);
         println!("{:?}", projected_solid_angle0);
         println!("{:?}", projected_solid_angle1);
         assert!(*projected_solid_angle0 == *projected_solid_angle1);
 
-        let area_pdf: PDF<f32x4, Area> = PDF::new(f32x4::new(0.1, 0.4, 0.2, 10.0));
-        let solid_angle = area_pdf.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 = area_pdf.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
+        let area_pdf_distant_object: PDF<f32x4, Area> = PDF::new(f32x4::new(0.1, 0.4, 0.2, 10.0));
+        let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
+        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
         let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
 
-        println!("{:?}", area_pdf);
+        println!("{:?}", area_pdf_distant_object);
         println!("{:?}", solid_angle);
         println!("{:?}", projected_solid_angle0);
         println!("{:?}", projected_solid_angle1);

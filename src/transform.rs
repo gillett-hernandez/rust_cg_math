@@ -145,7 +145,7 @@ impl Transform3 {
 
     pub fn inverse(self) -> Transform3 {
         // returns a transform3 that when multiplied with another Transform3, Vec3 or Point3,
-        // applies the reverse transform of self
+        // applies the inverse transform of self
         Transform3::new_from_raw(self.reverse, self.forward)
     }
 
@@ -302,7 +302,7 @@ impl From<nalgebra::Matrix4<f32>> for Matrix4x4 {
 impl Mul<Transform3> for Transform3 {
     type Output = Transform3;
     fn mul(self, rhs: Transform3) -> Self::Output {
-        Transform3::new_from_raw(self.forward * rhs.forward, rhs.reverse * self.reverse)
+        Transform3::new_from_raw(rhs.forward * self.forward, self.reverse * rhs.reverse)
     }
 }
 
@@ -337,8 +337,8 @@ mod tests {
     use super::*;
     #[test]
     fn test_transform() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 3.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 2.0);
+        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));
+        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
         let transform_scale = Transform3::from_scale(Vec3::new(2.0, 2.0, 2.0));
 
         let test_vec = Vec3::new(1.0, 1.0, 1.0);
@@ -357,73 +357,84 @@ mod tests {
     }
 
     #[test]
-    fn test_reverse() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 3.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 2.0);
+    fn test_round_trip_error() {
+        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));
+        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
         // let _transform_scale_uniform = Transform3::scale(Vec3::new(2.0, 2.0, 2.0));
         let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
 
-        let combination_trs = transform_translate * transform_rotate * transform_scale;
-        let combination_rs = transform_rotate * transform_scale;
-        let combination_tr = transform_translate * transform_rotate;
-        let combination_ts = transform_translate * transform_scale;
+        let trs = transform_translate * transform_rotate * transform_scale;
+        let trs2 = Transform3::from_stack(
+            Some(transform_scale),
+            Some(transform_rotate),
+            Some(transform_translate),
+        );
+        let rs = transform_rotate * transform_scale;
+        let tr = transform_translate * transform_rotate;
+        let ts = transform_translate * transform_scale;
 
-        let test_vec = Vec3::X;
+        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
         println!("testing vec {:?}", test_vec);
 
-        println!(
-            "vec trs, {:?}",
-            combination_trs.to_local(combination_trs.to_world(test_vec))
-        );
-        println!(
-            "vec  rs, {:?}",
-            combination_rs.to_local(combination_rs.to_world(test_vec))
-        );
-        println!(
-            "vec  tr, {:?}",
-            combination_tr.to_local(combination_tr.to_world(test_vec))
-        );
-        println!(
-            "vec  ts, {:?}",
-            combination_ts.to_local(combination_ts.to_world(test_vec))
-        );
+        let eval_round_trip_error_vec = |transform: Transform3, input: Vec3| {
+            (transform.to_local(transform.to_world(input)) - input).norm()
+        };
+        let eval_round_trip_error_point = |transform: Transform3, input: Point3| {
+            (transform.to_local(transform.to_world(input)) - input).norm()
+        };
+
+        println!("vec trs, {:?}", eval_round_trip_error_vec(trs, test_vec));
+        println!("vec trs2, {:?}", eval_round_trip_error_vec(trs2, test_vec));
+        println!("vec  rs, {:?}", eval_round_trip_error_vec(rs, test_vec));
+        println!("vec  tr, {:?}", eval_round_trip_error_vec(tr, test_vec));
+        println!("vec  ts, {:?}", eval_round_trip_error_vec(ts, test_vec));
 
         let test_point = Point3::ORIGIN + test_vec;
         println!("testing point {:?}", test_point);
 
         println!(
             "point trs, {:?}",
-            combination_trs.to_local(combination_trs.to_world(test_point))
+            eval_round_trip_error_point(trs, test_point)
+        );
+        println!(
+            "point trs2, {:?}",
+            eval_round_trip_error_point(trs2, test_point)
         );
         println!(
             "point  rs, {:?}",
-            combination_rs.to_local(combination_rs.to_world(test_point))
+            eval_round_trip_error_point(rs, test_point)
         );
         println!(
             "point  tr, {:?}",
-            combination_tr.to_local(combination_tr.to_world(test_point))
+            eval_round_trip_error_point(tr, test_point)
         );
         println!(
             "point  ts, {:?}",
-            combination_ts.to_local(combination_ts.to_world(test_point))
+            eval_round_trip_error_point(ts, test_point)
         );
     }
 
     #[test]
     fn test_transform_combination() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 1.0, 1.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 2.0);
-        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 2.0, 2.0));
+        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 1.0, 0.0));
+        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
+        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
 
         let combination_trs = transform_translate * transform_rotate * transform_scale;
+        let combination_trs_2 = Transform3::from_stack(
+            Some(transform_scale),
+            Some(transform_rotate),
+            Some(transform_translate),
+        );
         let combination_rs = transform_rotate * transform_scale;
         let combination_tr = transform_translate * transform_rotate;
         let combination_ts = transform_translate * transform_scale;
 
-        let test_vec = Vec3::X;
+        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
         println!("testing vec {:?}", test_vec);
 
         println!("vec trs, {:?}", combination_trs.to_world(test_vec));
+        println!("vec trs_2, {:?}", combination_trs_2.to_world(test_vec));
         println!("vec  rs, {:?}", combination_rs.to_world(test_vec));
         println!("vec  tr, {:?}", combination_tr.to_world(test_vec));
         println!("vec  ts, {:?}", combination_ts.to_world(test_vec));
@@ -432,9 +443,45 @@ mod tests {
         println!("testing point {:?}", test_point);
 
         println!("point trs, {:?}", combination_trs.to_world(test_point));
+        println!("point trs_2, {:?}", combination_trs_2.to_world(test_point));
         println!("point  rs, {:?}", combination_rs.to_world(test_point));
         println!("point  tr, {:?}", combination_tr.to_world(test_point));
         println!("point  ts, {:?}", combination_ts.to_world(test_point));
+    }
+
+    #[test]
+    fn test_reverse_transform_combination() {
+        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 1.0, 0.0));
+        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
+        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
+
+        let combination_trs = transform_translate * transform_rotate * transform_scale;
+        let combination_trs_2 = Transform3::from_stack(
+            Some(transform_scale),
+            Some(transform_rotate),
+            Some(transform_translate),
+        );
+        let combination_rs = transform_rotate * transform_scale;
+        let combination_tr = transform_translate * transform_rotate;
+        let combination_ts = transform_translate * transform_scale;
+
+        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
+        println!("testing vec {:?}", test_vec);
+
+        println!("vec trs, {:?}", combination_trs.to_local(test_vec));
+        println!("vec trs_2, {:?}", combination_trs_2.to_local(test_vec));
+        println!("vec  rs, {:?}", combination_rs.to_local(test_vec));
+        println!("vec  tr, {:?}", combination_tr.to_local(test_vec));
+        println!("vec  ts, {:?}", combination_ts.to_local(test_vec));
+
+        let test_point = Point3::ORIGIN + test_vec;
+        println!("testing point {:?}", test_point);
+
+        println!("point trs, {:?}", combination_trs.to_local(test_point));
+        println!("point trs_2, {:?}", combination_trs_2.to_local(test_point));
+        println!("point  rs, {:?}", combination_rs.to_local(test_point));
+        println!("point  tr, {:?}", combination_tr.to_local(test_point));
+        println!("point  ts, {:?}", combination_ts.to_local(test_point));
     }
 
     #[test]

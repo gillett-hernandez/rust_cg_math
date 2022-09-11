@@ -9,12 +9,17 @@ use std::{
 // TODO: figure out if it's necessary to create a separate trait for the support of a measure,
 // i.e. R for Uniform01, or R^2 for Area, or H+ for Projected Solid Angle, etc
 // differential forms of various measures
-pub trait Measure: Copy + Clone + Debug {}
+#[allow(unused_variables)]
+pub trait Measure: Copy + Clone + Debug + Default + Sized {
+    fn combine(self, other: Self) -> Self {
+        Self::default()
+    }
+}
 
 // differential solid angle
 //      = sin(theta) d[theta] d[phi]
 //      = d[cos theta] d[phi]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct SolidAngle {}
 impl Measure for SolidAngle {}
 
@@ -23,16 +28,16 @@ impl Measure for SolidAngle {}
 //      = |cos(theta)| sin(theta) d[theta] d[phi]
 //      = |cos(theta)| d[cos theta] d[phi]
 //      = sin(theta) d[sin(theta)] dphi
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {}
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Area {}
 impl Measure for Area {}
 
 // basic measure
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Uniform01 {}
 impl Measure for Uniform01 {}
 
@@ -40,9 +45,22 @@ impl Measure for Uniform01 {}
 //      = differential area x differential projected solid angle
 //      = differential projected area x differential solid angle
 //      = |W x N| * differential area * differential solid angle
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct Throughput {}
 impl Measure for Throughput {}
+
+#[derive(Debug, Copy, Clone)]
+pub struct PathThroughput {
+    pub rank: usize,
+}
+
+impl Default for PathThroughput {
+    fn default() -> Self {
+        Self { rank: 1 }
+    }
+}
+
+impl Measure for PathThroughput {}
 
 // misc traits
 pub trait Abs {
@@ -272,7 +290,7 @@ mod test {
     // TODO: implement trait for PDF and Measure so that you can more easily construct a new PDF on a new measure from existing pdfs, i.e.
 
     // subset of R^2
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Copy, Clone, Debug, Default)]
     struct DiskMeasure {}
     impl Measure for DiskMeasure {}
 
