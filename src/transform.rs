@@ -136,11 +136,11 @@ impl Transform3 {
             reverse: Matrix4x4::I,
         }
     }
-    pub fn new_from_matrix(forward: nalgebra::Matrix4<f32>) -> Self {
-        Transform3 {
+    pub fn new_from_matrix(forward: nalgebra::Matrix4<f32>) -> Option<Self> {
+        forward.try_inverse().map(|inverse| Transform3 {
             forward: Matrix4x4::from(forward),
-            reverse: Matrix4x4::from(forward.try_inverse().expect("matrix inverse failed")),
-        }
+            reverse: Matrix4x4::from(inverse),
+        })
     }
 
     pub fn inverse(self) -> Transform3 {
@@ -155,12 +155,14 @@ impl Transform3 {
             shift.y(),
             shift.z(),
         )))
+        .expect("somehow, translate matrix was not invertible")
     }
 
     pub fn from_scale(scale: Vec3) -> Self {
         Transform3::new_from_matrix(nalgebra::Matrix4::new_nonuniform_scaling(
             &nalgebra::Vector3::new(scale.x(), scale.y(), scale.z()),
         ))
+        .expect("somehow, scale matrix was not invertible")
     }
 
     pub fn from_axis_angle(axis: Vec3, radians: f32) -> Self {
@@ -169,7 +171,7 @@ impl Transform3 {
         let axisangle = radians * nalgebra::Vector3::new(axis.x(), axis.y(), axis.z());
 
         let affine = nalgebra::Matrix4::from_scaled_axis(axisangle);
-        Transform3::new_from_matrix(affine)
+        Transform3::new_from_matrix(affine).expect("somehow, rotation matrix was not invertible")
     }
 
     // pub fn rotation(quaternion: f32x4) -> Self {
@@ -267,37 +269,16 @@ impl From<nalgebra::Matrix4<f32>> for Matrix4x4 {
     }
 }
 
-// impl From<Matrix4x4> for nalgebra::Matrix4<f32> {
-//     fn from(matrix: Matrix4x4) -> Self {
-//         unimplemented!()
-//     }
-// }
-
-// impl Mul<Vec3> for Transform3 {
-//     type Output = Vec3;
-//     fn mul(self, rhs: Vec3) -> Self::Output {
-//         // only apply scale and rotation
-//         self.forward * rhs
-//     }
-// }
-
-// impl Mul<Point3> for Transform3 {
-//     type Output = Point3;
-//     fn mul(self, rhs: Point3) -> Self::Output {
-//         self.forward * rhs
-//     }
-// }
-
-// impl Mul<Ray> for Transform3 {
-//     type Output = Ray;
-//     fn mul(self, rhs: Ray) -> Self::Output {
-//         Ray {
-//             origin: self * rhs.origin,
-//             direction: self * rhs.direction,
-//             ..rhs
-//         }
-//     }
-// }
+impl From<Matrix4x4> for nalgebra::Matrix4<f32> {
+    fn from(other: Matrix4x4) -> Self {
+        let [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44]: [f32;
+            16] = other.0.into();
+        nalgebra::Matrix4::new(
+            m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44,
+        )
+        .transpose()
+    }
+}
 
 impl Mul<Transform3> for Transform3 {
     type Output = Transform3;
@@ -305,32 +286,6 @@ impl Mul<Transform3> for Transform3 {
         Transform3::new_from_raw(rhs.forward * self.forward, self.reverse * rhs.reverse)
     }
 }
-
-// impl Div<Vec3> for Transform3 {
-//     type Output = Vec3;
-//     fn div(self, rhs: Vec3) -> Self::Output {
-//         // only apply scale and rotation
-//         self.reverse * rhs
-//     }
-// }
-
-// impl Div<Point3> for Transform3 {
-//     type Output = Point3;
-//     fn div(self, rhs: Point3) -> Self::Output {
-//         self.reverse * rhs
-//     }
-// }
-
-// impl Div<Ray> for Transform3 {
-//     type Output = Ray;
-//     fn div(self, rhs: Ray) -> Self::Output {
-//         Ray {
-//             origin: self / rhs.origin,
-//             direction: self / rhs.direction,
-//             ..rhs
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
@@ -426,6 +381,11 @@ mod tests {
             Some(transform_rotate),
             Some(transform_translate),
         );
+        let Transform3 {
+            forward,
+            reverse: _,
+        } = combination_trs_2.clone();
+        let redone = Transform3::new_from_matrix(forward.into()).unwrap();
         let combination_rs = transform_rotate * transform_scale;
         let combination_tr = transform_translate * transform_rotate;
         let combination_ts = transform_translate * transform_scale;
@@ -435,6 +395,7 @@ mod tests {
 
         println!("vec trs, {:?}", combination_trs.to_world(test_vec));
         println!("vec trs_2, {:?}", combination_trs_2.to_world(test_vec));
+        println!("vec redone, {:?}", redone.to_world(test_vec));
         println!("vec  rs, {:?}", combination_rs.to_world(test_vec));
         println!("vec  tr, {:?}", combination_tr.to_world(test_vec));
         println!("vec  ts, {:?}", combination_ts.to_world(test_vec));
@@ -444,6 +405,7 @@ mod tests {
 
         println!("point trs, {:?}", combination_trs.to_world(test_point));
         println!("point trs_2, {:?}", combination_trs_2.to_world(test_point));
+        println!("point redone, {:?}", redone.to_world(test_point));
         println!("point  rs, {:?}", combination_rs.to_world(test_point));
         println!("point  tr, {:?}", combination_tr.to_world(test_point));
         println!("point  ts, {:?}", combination_ts.to_world(test_point));
@@ -494,7 +456,7 @@ mod tests {
         let simd_vec = Vec3(f32x4::new(1.0, 2.0, 3.0, 0.0));
         let simd_point = Point3(f32x4::new(1.0, 2.0, 3.0, 1.0));
 
-        let transform = Transform3::new_from_matrix(n_translate);
+        let transform = Transform3::new_from_matrix(n_translate).unwrap();
         let result1 = n_translate * point;
         let result2 = matrix * simd_vec;
         let result3 = matrix * simd_point;
