@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 # itertools = "0.10.1"
 num-traits = "0.2.15"
-nalgebra = "0.31.0"
+nalgebra = "0.32.2"
 num_cpus = "1.13.0"
 ordered-float = "3.0.0"
 packed_simd = { version = "0.3.8", package = "packed_simd_2" }
