@@ -1,6 +1,6 @@
 [package]
 name = "math"
-version = "1.1.0"
+version = "1.1.1"
 authors = ["Gillett Hernandez <gillett.hernandez@gmail.com>"]
 edition = "2018"
 
@@ -12,7 +12,8 @@ num-traits = "0.2.15"
 nalgebra = "0.32.2"
 num_cpus = "1.13.0"
 ordered-float = "3.0.0"
-packed_simd = { version = "0.3.8", package = "packed_simd_2" }
+# packed_simd = { version = "0.3.8", package = "packed_simd_2" }
+packed_simd = "0.3.9"
 rand = "0.8.5"
 rayon = "1.5.3"
 serde = { version = "1.0.137", features = ["derive"] }
@@ -24,8 +25,8 @@ serde_json = "1.0.81"
 
 [profile.dev]
 opt-level = 3
-panic='abort'
-debug=true
+panic = 'abort'
+debug = true
 
 [profile.test]
 opt-level = 0
