@@ -13,13 +13,6 @@ pub fn random_in_unit_sphere(r: Sample3D) -> Vec3 {
 }
 
 pub fn random_on_unit_sphere(r: Sample2D) -> Vec3 {
-    // let u = 1.0 - 2.0 * r.x;
-    // let sqrt1u2 = (1.0 - u * u).sqrt();
-    // let (mut y, mut x) = (2.0 * PI * r.y).sin_cos();
-    // x *= sqrt1u2;
-    // y *= sqrt1u2;
-    // Vec3::new(x, y, u)
-    // let Sample2D { u, v } = self;
     let Sample2D { x, y } = r;
 
     let phi = x * 2.0 * PI;

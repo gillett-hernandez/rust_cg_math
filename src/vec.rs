@@ -28,9 +28,7 @@ impl fmt::Debug for Vec3 {
 }
 
 impl Vec3 {
-    // #[]
     pub const fn new(x: f32, y: f32, z: f32) -> Vec3 {
-        // Vec3 { x, y, z, w: 0.0 }
         Vec3(f32x4::new(x, y, z, 0.0))
     }
     pub const ZERO: Vec3 = Vec3(f32x4::splat(0.0));
@@ -69,6 +67,24 @@ impl Vec3 {
     }
     pub fn as_array(&self) -> [f32; 4] {
         self.0.into()
+    }
+    pub fn cross(&self, other: Vec3) -> Self {
+        let (x1, y1, z1) = (self.x(), self.y(), self.z());
+        let (x2, y2, z2) = (other.x(), other.y(), other.z());
+        Vec3::new(y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - x2 * y1)
+    }
+
+    pub fn norm_squared(&self) -> f32 {
+        (self.0 * self.0 * Vec3::MASK).sum()
+    }
+
+    pub fn norm(&self) -> f32 {
+        self.norm_squared().sqrt()
+    }
+
+    pub fn normalized(&self) -> Self {
+        let norm = self.norm();
+        Vec3(self.0 / norm)
     }
 }
 
@@ -162,27 +178,6 @@ impl From<f32> for Vec3 {
 impl From<Vec3> for f32x4 {
     fn from(v: Vec3) -> f32x4 {
         v.0
-    }
-}
-
-impl Vec3 {
-    pub fn cross(&self, other: Vec3) -> Self {
-        let (x1, y1, z1) = (self.x(), self.y(), self.z());
-        let (x2, y2, z2) = (other.x(), other.y(), other.z());
-        Vec3::new(y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - x2 * y1)
-    }
-
-    pub fn norm_squared(&self) -> f32 {
-        (self.0 * self.0 * Vec3::MASK).sum()
-    }
-
-    pub fn norm(&self) -> f32 {
-        self.norm_squared().sqrt()
-    }
-
-    pub fn normalized(&self) -> Self {
-        let norm = self.norm();
-        Vec3(self.0 / norm)
     }
 }
 
