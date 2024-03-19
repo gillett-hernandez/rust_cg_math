@@ -1,43 +1,43 @@
-use crate::prelude::Vec3;
-// use packed_simd::{f32x4, f32x8};
-use packed_simd::f32x4;
+use crate::prelude::*;
 
-use std::f32::INFINITY;
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::ops::{AddAssign, Sub, SubAssign};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Point3(pub f32x4);
 
 impl Point3 {
     pub const fn new(x: f32, y: f32, z: f32) -> Point3 {
-        Point3(f32x4::new(x, y, z, 1.0))
+        Point3(f32x4::from_array([x, y, z, 1.0]))
     }
-    pub const ZERO: Point3 = Point3(f32x4::new(0.0, 0.0, 0.0, 1.0));
-    pub const ORIGIN: Point3 = Point3(f32x4::new(0.0, 0.0, 0.0, 1.0));
-    pub const INFINITY: Point3 = Point3(f32x4::new(INFINITY, INFINITY, INFINITY, 1.0));
-    pub const NEG_INFINITY: Point3 = Point3(f32x4::new(-INFINITY, -INFINITY, -INFINITY, 1.0));
+    pub const ZERO: Point3 = Point3(f32x4::from_array([0.0, 0.0, 0.0, 1.0]));
+    pub const ORIGIN: Point3 = Point3(f32x4::from_array([0.0, 0.0, 0.0, 1.0]));
+    pub const INFINITY: Point3 = Point3(f32x4::from_array([INFINITY, INFINITY, INFINITY, 1.0]));
+    pub const NEG_INFINITY: Point3 =
+        Point3(f32x4::from_array([-INFINITY, -INFINITY, -INFINITY, 1.0]));
     pub fn is_finite(&self) -> bool {
         !(self.0.is_nan().any() || self.0.is_infinite().any())
     }
 }
 
 impl Point3 {
+    #[inline(always)]
     pub fn x(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(0) }
+        self.0[0]
     }
+    #[inline(always)]
     pub fn y(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(1) }
+        self.0[1]
     }
+    #[inline(always)]
     pub fn z(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(2) }
+        self.0[2]
     }
+    #[inline(always)]
     pub fn w(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(3) }
+        self.0[3]
     }
     pub fn normalize(mut self) -> Self {
-        unsafe {
-            self.0 = self.0 / self.0.extract_unchecked(3);
-        }
+        self.0 = self.0 / f32x4::splat(self.0[3]);
         self
     }
     pub fn as_array(&self) -> [f32; 4] {
@@ -87,7 +87,7 @@ impl Sub for Point3 {
     type Output = Vec3;
     fn sub(self, other: Point3) -> Vec3 {
         // Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-        Vec3((self.0 - other.0) * f32x4::new(1.0, 1.0, 1.0, 0.0))
+        Vec3((self.0 - other.0) * f32x4::from_array([1.0, 1.0, 1.0, 0.0]))
     }
 }
 

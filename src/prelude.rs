@@ -1,4 +1,4 @@
-pub(crate) use packed_simd::f32x4;
+pub(crate) use std::simd::{cmp::SimdPartialOrd, f32x4, num::SimdFloat};
 
 pub use crate::bounds::*;
 pub use crate::color::*;

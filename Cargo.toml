@@ -1,6 +1,6 @@
 [package]
 name = "math"
-version = "1.1.1"
+version = "2.1.1"
 authors = ["Gillett Hernandez <gillett.hernandez@gmail.com>"]
 edition = "2018"
 
@@ -8,16 +8,16 @@ edition = "2018"
 
 [dependencies]
 # itertools = "0.10.1"
-num-traits = "0.2.15"
-nalgebra = "0.32.2"
-num_cpus = "1.13.0"
-ordered-float = "3.0.0"
-# packed_simd = { version = "0.3.8", package = "packed_simd_2" }
-packed_simd = "0.3.9"
-rand = "0.8.5"
-rayon = "1.5.3"
+num-traits = "~0.2"
+nalgebra = "~0.32"
+num_cpus = "~1"
+ordered-float = "~4.2"
+rand = "~0.8"
+rayon = "~1.9"
 serde = { version = "1.0.137", features = ["derive"] }
 
+[features]
+simd_math_extensions = []
 
 [build-dependencies]
 serde = { version = "1.0.137", features = ["derive"] }

@@ -1,5 +1,4 @@
-#[macro_use]
-extern crate packed_simd;
+#![feature(portable_simd)]
 
 pub mod prelude;
 pub mod traits;
@@ -31,7 +30,6 @@ pub enum Sidedness {
 
 #[cfg(test)]
 mod test {
-
 
     use super::prelude::*;
     #[test]
@@ -65,7 +63,11 @@ mod test {
 
     #[test]
     fn test_adaptive_stratified_sampling() {
-        let complex_curve = Curve::Linear { signal: vec![], bounds: Bounds1D::new(0.0, 1.0), mode: InterpolationMode::Cubic };
-        
+        let complex_curve = Curve::Linear {
+            signal: vec![],
+            bounds: Bounds1D::new(0.0, 1.0),
+            mode: InterpolationMode::Cubic,
+        };
+        // TODO: finish writing this
     }
 }

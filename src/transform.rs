@@ -1,21 +1,20 @@
 use crate::prelude::*;
 
 use nalgebra;
-use packed_simd::{f32x16, f32x4};
-use std::ops::Mul;
+use std::ops::IndexMut;
+use std::simd::{f32x16, simd_swizzle};
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Matrix4x4(f32x16);
 
 impl Matrix4x4 {
-    const I: Matrix4x4 = Matrix4x4(f32x16::new(
+    const I: Matrix4x4 = Matrix4x4(f32x16::from_array([
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-    ));
+    ]));
     pub fn transpose(&self) -> Matrix4x4 {
-        let [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44]: [f32;
-            16] = self.0.into();
-        Matrix4x4(f32x16::new(
-            m11, m21, m31, m41, m12, m22, m32, m42, m13, m23, m33, m43, m14, m24, m34, m44,
+        Matrix4x4(simd_swizzle!(
+            self.0,
+            [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
         ))
     }
 }
@@ -30,12 +29,16 @@ impl Mul<Vec3> for Matrix4x4 {
         // let column1: f32x4 = shuffle!(self.0, [1, 5, 9, 13]);
         // let column2: f32x4 = shuffle!(self.0, [2, 6, 10, 14]);
         // let column3: f32x4 = shuffle!(self.0, [3, 7, 11, 15]);
-        let row1: f32x4 = shuffle!(self.0, [0, 1, 2, 3]);
-        let row2: f32x4 = shuffle!(self.0, [4, 5, 6, 7]);
-        let row3: f32x4 = shuffle!(self.0, [8, 9, 10, 11]);
-        let row4: f32x4 = shuffle!(self.0, [12, 13, 14, 15]);
 
-        let result = row1 * v0 + row2 * v1 + row3 * v2 + row4 * v3;
+        let row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
+        let row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
+        let row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
+        let row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
+
+        let result = row1 * f32x4::splat(v0)
+            + row2 * f32x4::splat(v1)
+            + row3 * f32x4::splat(v2)
+            + row4 * f32x4::splat(v3);
 
         result.into()
     }
@@ -51,12 +54,15 @@ impl Mul<Point3> for Matrix4x4 {
         // let column2: f32x4 = shuffle!(self.0, [1, 5, 9, 13]);
         // let column3: f32x4 = shuffle!(self.0, [2, 6, 10, 14]);
         // let column4: f32x4 = shuffle!(self.0, [3, 7, 11, 15]);
-        let row1: f32x4 = shuffle!(self.0, [0, 1, 2, 3]);
-        let row2: f32x4 = shuffle!(self.0, [4, 5, 6, 7]);
-        let row3: f32x4 = shuffle!(self.0, [8, 9, 10, 11]);
-        let row4: f32x4 = shuffle!(self.0, [12, 13, 14, 15]);
+        let row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
+        let row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
+        let row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
+        let row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
 
-        let result = row1 * v0 + row2 * v1 + row3 * v2 + row4 * v3;
+        let result = row1 * f32x4::splat(v0)
+            + row2 * f32x4::splat(v1)
+            + row3 * f32x4::splat(v2)
+            + row4 * f32x4::splat(v3);
 
         Point3(result).normalize()
     }
@@ -75,50 +81,42 @@ impl Mul<Ray> for Matrix4x4 {
 impl Mul for Matrix4x4 {
     type Output = Matrix4x4;
     fn mul(self, rhs: Matrix4x4) -> Self::Output {
-        // let a_column1: f32x4 = shuffle!(self.0, [0, 4, 8, 12]);
-        // let a_column2: f32x4 = shuffle!(self.0, [1, 5, 9, 13]);
-        // let a_column3: f32x4 = shuffle!(self.0, [2, 6, 10, 14]);
-        // let a_column4: f32x4 = shuffle!(self.0, [3, 7, 11, 15]);
+        // should probably just use nalgebra's matmul rather than my own
 
-        let a_row1: f32x4 = shuffle!(self.0, [0, 1, 2, 3]);
-        let a_row2: f32x4 = shuffle!(self.0, [4, 5, 6, 7]);
-        let a_row3: f32x4 = shuffle!(self.0, [8, 9, 10, 11]);
-        let a_row4: f32x4 = shuffle!(self.0, [12, 13, 14, 15]);
+        let a_row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
+        let a_row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
+        let a_row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
+        let a_row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
 
-        let b_column1: f32x4 = shuffle!(rhs.0, [0, 4, 8, 12]);
-        let b_column2: f32x4 = shuffle!(rhs.0, [1, 5, 9, 13]);
-        let b_column3: f32x4 = shuffle!(rhs.0, [2, 6, 10, 14]);
-        let b_column4: f32x4 = shuffle!(rhs.0, [3, 7, 11, 15]);
+        let b_column1: f32x4 = simd_swizzle!(rhs.0, [0, 4, 8, 12]);
+        let b_column2: f32x4 = simd_swizzle!(rhs.0, [1, 5, 9, 13]);
+        let b_column3: f32x4 = simd_swizzle!(rhs.0, [2, 6, 10, 14]);
+        let b_column4: f32x4 = simd_swizzle!(rhs.0, [3, 7, 11, 15]);
 
-        // let b_row1: f32x4 = shuffle!(rhs.0, [0, 1, 2, 3]);
-        // let b_row2: f32x4 = shuffle!(rhs.0, [4, 5, 6, 7]);
-        // let b_row3: f32x4 = shuffle!(rhs.0, [8, 9, 10, 11]);
-        // let b_row4: f32x4 = shuffle!(rhs.0, [12, 13, 14, 15]);
+        let m11 = (a_row1 * b_column1).reduce_sum();
+        let m12 = (a_row1 * b_column2).reduce_sum();
+        let m13 = (a_row1 * b_column3).reduce_sum();
+        let m14 = (a_row1 * b_column4).reduce_sum();
 
-        let m11 = (a_row1 * b_column1).sum();
-        let m12 = (a_row1 * b_column2).sum();
-        let m13 = (a_row1 * b_column3).sum();
-        let m14 = (a_row1 * b_column4).sum();
+        let m21 = (a_row2 * b_column1).reduce_sum();
+        let m22 = (a_row2 * b_column2).reduce_sum();
+        let m23 = (a_row2 * b_column3).reduce_sum();
+        let m24 = (a_row2 * b_column4).reduce_sum();
 
-        let m21 = (a_row2 * b_column1).sum();
-        let m22 = (a_row2 * b_column2).sum();
-        let m23 = (a_row2 * b_column3).sum();
-        let m24 = (a_row2 * b_column4).sum();
+        let m31 = (a_row3 * b_column1).reduce_sum();
+        let m32 = (a_row3 * b_column2).reduce_sum();
+        let m33 = (a_row3 * b_column3).reduce_sum();
+        let m34 = (a_row3 * b_column4).reduce_sum();
 
-        let m31 = (a_row3 * b_column1).sum();
-        let m32 = (a_row3 * b_column2).sum();
-        let m33 = (a_row3 * b_column3).sum();
-        let m34 = (a_row3 * b_column4).sum();
-
-        let m41 = (a_row4 * b_column1).sum();
-        let m42 = (a_row4 * b_column2).sum();
-        let m43 = (a_row4 * b_column3).sum();
-        let m44 = (a_row4 * b_column4).sum();
+        let m41 = (a_row4 * b_column1).reduce_sum();
+        let m42 = (a_row4 * b_column2).reduce_sum();
+        let m43 = (a_row4 * b_column3).reduce_sum();
+        let m44 = (a_row4 * b_column4).reduce_sum();
 
         Matrix4x4 {
-            0: f32x16::new(
+            0: f32x16::from_array([
                 m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44,
-            ),
+            ]),
         }
     }
 }
@@ -220,9 +218,9 @@ impl Transform3 {
         let [m21, m22, m23, _]: [f32; 4] = v1.into();
         let [m31, m32, m33, _]: [f32; 4] = v2.into();
 
-        let m = Matrix4x4(f32x16::new(
+        let m = Matrix4x4(f32x16::from_array([
             m11, m12, m13, 0.0, m21, m22, m23, 0.0, m31, m32, m33, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ));
+        ]));
         Transform3::new_from_raw(m.transpose(), m)
     }
 
@@ -259,11 +257,10 @@ impl From<TangentFrame> for Transform3 {
 
 impl From<nalgebra::Matrix4<f32>> for Matrix4x4 {
     fn from(matrix: nalgebra::Matrix4<f32>) -> Self {
-        // let slice: &[f32] = matrix.as_slice().into();
         let vec: Vec<f32> = matrix.as_slice().to_owned();
         let mut elements: f32x16 = f32x16::splat(0.0);
         for (i, v) in vec.iter().enumerate() {
-            elements = elements.replace(i, *v);
+            *elements.index_mut(i) = *v;
         }
         Matrix4x4(elements)
     }
@@ -453,8 +450,8 @@ mod tests {
 
         let matrix = Matrix4x4::from(n_translate);
         let point = nalgebra::Vector4::new(1.0, 2.0, 3.0, 1.0);
-        let simd_vec = Vec3(f32x4::new(1.0, 2.0, 3.0, 0.0));
-        let simd_point = Point3(f32x4::new(1.0, 2.0, 3.0, 1.0));
+        let simd_vec = Vec3(f32x4::from_array([1.0, 2.0, 3.0, 0.0]));
+        let simd_point = Point3(f32x4::from_array([1.0, 2.0, 3.0, 1.0]));
 
         let transform = Transform3::new_from_matrix(n_translate).unwrap();
         let result1 = n_translate * point;

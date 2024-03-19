@@ -1,13 +1,11 @@
 use crate::prelude::*;
-use crate::traits::Uniform01;
 
-use crate::spectral::{
-    x_bar, y_bar, z_bar, HeroWavelength, SingleWavelength, WavelengthEnergyTrait,
-};
+use crate::spectral::{x_bar, y_bar, z_bar};
 
 use ordered_float::OrderedFloat;
-use packed_simd::f32x4;
 use serde::{Deserialize, Serialize};
+use std::simd::num::SimdUint;
+use std::simd::usizex4;
 
 const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 
@@ -370,12 +368,12 @@ impl Curve {
             } else {
                 self.evaluate_power(lambda)
             };
-            sum.0 += f32x4::new(
+            sum.0 += f32x4::from_array([
                 val * x_bar(angstroms),
                 val * y_bar(angstroms),
                 val * z_bar(angstroms),
                 0.0,
-            ) * step_size;
+            ]) * f32x4::splat(step_size);
         }
         sum
     }
@@ -405,6 +403,7 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
     }
 }
 
+#[cfg(feature = "simd_math_extensions")]
 impl SpectralPowerDistributionFunction<f32x4> for Curve {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         match &self {
@@ -414,37 +413,28 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
                 bounds,
                 mode,
             } => {
-                let step_size = bounds.span() / (signal.len() as f32);
-                let index = (lambda - bounds.lower) / step_size;
-                let left = f32x4::new(
-                    signal[index.extract(0) as usize],
-                    signal[index.extract(1) as usize],
-                    signal[index.extract(2) as usize],
-                    signal[index.extract(3) as usize],
-                );
-                let squeeze = |idx: usize| {
-                    if idx + 1 < signal.len() {
-                        signal[idx + 1]
-                    } else {
-                        signal[idx]
-                    }
-                };
-                let right = f32x4::new(
-                    squeeze(index.extract(0) as usize),
-                    squeeze(index.extract(1) as usize),
-                    squeeze(index.extract(2) as usize),
-                    squeeze(index.extract(3) as usize),
-                );
-                let t = (lambda - (bounds.lower + index * step_size)) / step_size;
+                let splatted_step_size = f32x4::splat(bounds.span() / (signal.len() as f32));
+                let index =
+                    ((lambda - f32x4::splat(bounds.lower)) / splatted_step_size).cast::<usize>();
+
+                let left = f32x4::gather_or_default(&signal, index);
+
+                let shifted = index + usizex4::splat(1);
+                let right =
+                    f32x4::gather_or(&signal, shifted, f32x4::splat(*signal.last().unwrap()));
+
+                let t = (lambda
+                    - (f32x4::splat(bounds.lower) + index.cast::<f32>() * splatted_step_size))
+                    / splatted_step_size;
                 // println!("t is {}", t);
                 match mode {
-                    InterpolationMode::Linear => (1.0 - t) * left + t * right,
-                    InterpolationMode::Nearest => t.lt(f32x4::splat(0.5)).select(left, right),
+                    InterpolationMode::Linear => (f32x4::splat(1.0) - t) * left + t * right,
+                    InterpolationMode::Nearest => t.simd_lt(f32x4::splat(0.5)).select(left, right),
                     InterpolationMode::Cubic => {
-                        let t2 = 2.0 * t;
-                        let one_sub_t = 1.0 - t;
-                        let h00 = (1.0 + t2) * one_sub_t * one_sub_t;
-                        let h01 = t * t * (3.0 - t2);
+                        let t2 = f32x4::splat(2.0) * t;
+                        let one_sub_t = f32x4::splat(1.0) - t;
+                        let h00 = (f32x4::splat(1.0) + t2) * one_sub_t * one_sub_t;
+                        let h01 = t * t * (f32x4::splat(3.0) - t2);
                         h00 * left + h01 * right
                     }
                 }
@@ -456,36 +446,23 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
             } => {
                 let [x0, xs, y0, ys]: [f32; 4] = (*domain_range_mapping).into();
                 debug_assert!(xs > 0.0);
-                let mut val = f32x4::splat(y0);
 
-                let x = (lambda - x0) / xs;
-                // y offset takes care of the constant (x^0) term
-
-                let (low, high) = (
-                    f32x4::from_slice_unaligned(&coefficients[0..4]),
-                    f32x4::from_slice_unaligned(&coefficients[4..8]),
-                );
-
-                let low_pow = f32x4::new(1.0, 2.0, 3.0, 4.0);
-                let high_pow = f32x4::new(1.0, 2.0, 3.0, 4.0) + 4.0;
+                let x = (lambda - f32x4::splat(x0)) / f32x4::splat(xs);
 
                 // TODO: optimize this more
-                for i in 0..4 {
-                    val = val.replace(
-                        i,
-                        val.extract(i)
-                            + ys * (low * f32x4::splat(x.extract(i)).powf(low_pow)).sum(),
-                    );
-                    val = val.replace(
-                        i,
-                        val.extract(i)
-                            + ys * (high * f32x4::splat(x.extract(i)).powf(high_pow)).sum(),
-                    );
+                let mut sum = f32x4::splat(y0);
+
+                // y offset takes care of the constant (x^0) term, so start with x rather than 1
+                let mut xpow = x;
+
+                for i in 0..8 {
+                    sum += f32x4::splat(coefficients[i]) * xpow;
+                    xpow *= x;
                 }
 
-                val.max(f32x4::ZERO)
+                sum.max(f32x4::ZERO) * f32x4::splat(ys)
             }
-            Curve::Cauchy { a, b } => *a + *b / (lambda * lambda),
+            Curve::Cauchy { a, b } => f32x4::splat(*a) + f32x4::splat(*b) / (lambda * lambda),
             Curve::Exponential { signal } => {
                 let mut val = f32x4::splat(0.0);
                 for &(offset, sigma1, sigma2, multiplier) in signal {
@@ -507,15 +484,16 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
                     bbd
                 } else {
                     // renormalize blackbody spectra so that it's all between 0 and 1, then multiply by boost.
-                    *boost * bbd / blackbody(*temperature, max_blackbody_lambda(*temperature))
+                    f32x4::splat(*boost) * bbd
+                        / f32x4::splat(blackbody(*temperature, max_blackbody_lambda(*temperature)))
                 }
             }
-            _ => f32x4::new(
-                self.evaluate(lambda.extract(0)),
-                self.evaluate(lambda.extract(1)),
-                self.evaluate(lambda.extract(2)),
-                self.evaluate(lambda.extract(3)),
-            ),
+            _ => f32x4::from_array([
+                self.evaluate(lambda[0]),
+                self.evaluate(lambda[1]),
+                self.evaluate(lambda[2]),
+                self.evaluate(lambda[3]),
+            ]),
         }
     }
 
@@ -644,6 +622,7 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
 }
 
 // TODO: figure out how to use SMIS/CMIS for these sample functions, especially with CurveWithCDF
+#[cfg(feature = "simd_math_extensions")]
 impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         self.pdf.evaluate_power(lambda)
@@ -731,7 +710,7 @@ impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
                 // println!("power was {}", power);
                 (
                     out_we.replace_energy(power),
-                    f32x4::splat(power.extract(0) / self.pdf_integral).into(),
+                    f32x4::splat(power[0] / self.pdf_integral).into(),
                 )
             }
             // should this be self.pdf.sample_power_and_pdf?
@@ -794,14 +773,15 @@ mod test {
     fn test_curve_exponential() {}
     #[test]
     fn test_curve_inverse_exponential() {}
+    #[cfg(feature = "simd_math_extensions")]
     #[test]
     fn test_curve_polynomial() {
         let curve = Curve::Polynomial {
-            domain_range_mapping: f32x4::new(600.0, 200.0, 0.5, 0.06),
+            domain_range_mapping: f32x4::from_array([600.0, 200.0, 0.5, 0.06]),
             coefficients: [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0],
         };
 
-        let result = curve.evaluate_power(f32x4::new(450.0, 550.0, 650.0, 750.0));
+        let result = curve.evaluate_power(f32x4::from_array([450.0, 550.0, 650.0, 750.0]));
         println!("{:?}", result);
     }
     #[test]
@@ -1019,6 +999,7 @@ mod test {
     }
 
     #[test]
+    #[cfg(feature = "simd_math_extensions")]
     fn test_cdf_sample_hwss() {
         let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![

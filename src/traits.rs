@@ -77,27 +77,28 @@ impl Abs for f32 {
 impl Abs for f32x4 {
     #[inline(always)]
     fn abs(self) -> Self {
-        self.abs()
+        // disambiguation needed because this method ^ and this method v share the same name
+        std::simd::num::SimdFloat::abs(self)
     }
 }
 
-pub trait MyPartialOrd {
+pub trait TotalPartialOrd {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering>;
 }
 
-impl MyPartialOrd for f32 {
+impl TotalPartialOrd for f32 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         PartialOrd::partial_cmp(self, other)
     }
 }
 
-impl MyPartialOrd for f32x4 {
+impl TotalPartialOrd for f32x4 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.eq(other) {
             Some(Ordering::Equal)
-        } else if self.ge(*other).all() {
+        } else if self.simd_ge(*other).all() {
             Some(Ordering::Greater)
-        } else if self.le(*other).all() {
+        } else if self.simd_le(*other).all() {
             Some(Ordering::Less)
         } else {
             None
@@ -196,7 +197,7 @@ pub trait Field:
     + Clone
     + Copy
     + PartialEq
-    + MyPartialOrd
+    + TotalPartialOrd
     + CheckInf
     + CheckNAN
     + Debug
@@ -242,22 +243,22 @@ impl Field for f32 {
 impl Scalar for f32 {}
 
 impl Field for f32x4 {
-    const ONE: Self = f32x4::splat(1.0);
-    const ZERO: Self = f32x4::splat(0.0);
+    const ONE: Self = f32x4::from_array([1.0, 1.0, 1.0, 1.0]);
+    const ZERO: Self = f32x4::from_array([0.0, 0.0, 0.0, 0.0]);
     #[inline(always)]
     fn max(&self, other: Self) -> Self {
-        f32x4::max(*self, other)
+        f32x4::simd_max(*self, other)
     }
     #[inline(always)]
     fn min(&self, other: Self) -> Self {
-        f32x4::min(*self, other)
+        f32x4::simd_min(*self, other)
     }
 }
 
 impl ToScalar<f32> for f32x4 {
     #[inline(always)]
     fn to_scalar(&self) -> f32 {
-        self.extract(0)
+        self[0]
     }
 }
 impl ToScalar<f32> for f32 {

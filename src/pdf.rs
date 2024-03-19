@@ -73,22 +73,22 @@ impl<T: Field, M: Measure> Div for PDF<T, M> {
 
 impl<T: Field, S: Scalar, M: Measure> Mul<S> for PDF<T, M>
 where
-    T: Mul<S, Output = T>,
+    T: FromScalar<S>,
 {
     type Output = Self;
 
     fn mul(self, rhs: S) -> Self::Output {
-        PDF::new(self.v * rhs)
+        PDF::new(self.v * T::from_scalar(rhs))
     }
 }
 impl<T: Field, S: Scalar, M: Measure> Div<S> for PDF<T, M>
 where
-    T: Div<S, Output = T>,
+    T: FromScalar<S>,
 {
     type Output = Self;
 
     fn div(self, rhs: S) -> Self::Output {
-        PDF::new(self.v / rhs)
+        PDF::new(self.v / T::from_scalar(rhs))
     }
 }
 
@@ -99,9 +99,9 @@ impl<T: Field> PDF<T, SolidAngle> {
         cos_theta: S,
     ) -> PDF<T, ProjectedSolidAngle>
     where
-        T: Mul<S, Output = T>,
+        T: FromScalar<S>,
     {
-        PDF::new(self.v * cos_theta.abs())
+        PDF::new(self.v * T::from_scalar(cos_theta).abs())
     }
 }
 
@@ -112,9 +112,9 @@ impl<T: Field> PDF<T, Area> {
         distance_squared: S,
     ) -> PDF<T, SolidAngle>
     where
-        T: Mul<S, Output = T> + Div<S, Output = T>,
+        T: FromScalar<S>,
     {
-        PDF::new(self.v * cos_theta.abs() / distance_squared)
+        PDF::new(self.v * T::from_scalar(cos_theta).abs() / T::from_scalar(distance_squared))
     }
 }
 
@@ -126,11 +126,11 @@ impl<T: Field> PDF<T, Area> {
         distance_squared: S,
     ) -> PDF<T, ProjectedSolidAngle>
     where
-        T: Mul<S, Output = T> + Div<S, Output = T>,
+        T: FromScalar<S>,
     {
         // this is valid, but probably somewhat slower.
         // self.convert_to(cos_i, distance_squared).convert_to(cos_o)
-        PDF::new(self.v * (cos_o * cos_i).abs() / (distance_squared))
+        PDF::new(self.v * T::from_scalar(cos_o * cos_i).abs() / T::from_scalar(distance_squared))
     }
 }
 
@@ -149,7 +149,8 @@ mod test {
     fn test_area_pdf() {
         let area_pdf_distant_object: PDF<f32, Area> = PDF::new(1.0);
         let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
+        let projected_solid_angle0 =
+            area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
         let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
 
         println!("{:?}", area_pdf_distant_object);
@@ -158,10 +159,15 @@ mod test {
         println!("{:?}", projected_solid_angle1);
         assert!(*projected_solid_angle0 == *projected_solid_angle1);
 
-        let area_pdf_distant_object: PDF<f32x4, Area> = PDF::new(f32x4::new(0.1, 0.4, 0.2, 10.0));
+        let area_pdf_distant_object: PDF<f32x4, Area> =
+            PDF::new(f32x4::from_array([0.1, 0.4, 0.2, 10.0]));
         let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
-        let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
+        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(
+            0.5.into(),
+            0.5.into(),
+            2.0.into(),
+        );
+        let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5.into());
 
         println!("{:?}", area_pdf_distant_object);
         println!("{:?}", solid_angle);

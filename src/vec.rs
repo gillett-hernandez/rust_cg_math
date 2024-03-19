@@ -1,11 +1,10 @@
-// use packed_simd::{f32x4, f32x8};
-use crate::point::Point3;
+// use std::simd::{f32x4, f32x8};
+use crate::prelude::*;
 
-use packed_simd::f32x4;
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
-use std::ops::{Add, Div, Mul, MulAssign, Neg, Sub};
+use std::ops::{MulAssign, Sub};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Axis {
@@ -29,10 +28,10 @@ impl fmt::Debug for Vec3 {
 
 impl Vec3 {
     pub const fn new(x: f32, y: f32, z: f32) -> Vec3 {
-        Vec3(f32x4::new(x, y, z, 0.0))
+        Vec3(f32x4::from_array([x, y, z, 0.0]))
     }
-    pub const ZERO: Vec3 = Vec3(f32x4::splat(0.0));
-    pub const MASK: f32x4 = f32x4::new(1.0, 1.0, 1.0, 0.0);
+    pub const ZERO: Vec3 = Vec3(f32x4::ZERO);
+    pub const MASK: f32x4 = f32x4::from_array([1.0, 1.0, 1.0, 0.0]);
     pub const X: Vec3 = Vec3::new(1.0, 0.0, 0.0);
     pub const Y: Vec3 = Vec3::new(0.0, 1.0, 0.0);
     pub const Z: Vec3 = Vec3::new(0.0, 0.0, 1.0);
@@ -51,19 +50,19 @@ impl Vec3 {
 impl Vec3 {
     #[inline(always)]
     pub fn x(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(0) }
+        self.0[0]
     }
     #[inline(always)]
     pub fn y(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(1) }
+        self.0[1]
     }
     #[inline(always)]
     pub fn z(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(2) }
+        self.0[2]
     }
     #[inline(always)]
     pub fn w(&self) -> f32 {
-        unsafe { self.0.extract_unchecked(3) }
+        self.0[3]
     }
     pub fn as_array(&self) -> [f32; 4] {
         self.0.into()
@@ -75,7 +74,7 @@ impl Vec3 {
     }
 
     pub fn norm_squared(&self) -> f32 {
-        (self.0 * self.0 * Vec3::MASK).sum()
+        (self.0 * self.0 * Vec3::MASK).reduce_sum()
     }
 
     pub fn norm(&self) -> f32 {
@@ -84,15 +83,16 @@ impl Vec3 {
 
     pub fn normalized(&self) -> Self {
         let norm = self.norm();
-        Vec3(self.0 / norm)
+        Vec3(self.0 / f32x4::splat(norm))
     }
 }
 
 impl Mul for Vec3 {
     type Output = f32;
+    /// dot product
     fn mul(self, other: Vec3) -> f32 {
         // self.x * other.x + self.y * other.y + self.z * other.z
-        (self.0 * other.0).sum()
+        (self.0 * other.0).reduce_sum()
     }
 }
 
@@ -108,21 +108,21 @@ impl MulAssign for Vec3 {
 impl Mul<f32> for Vec3 {
     type Output = Vec3;
     fn mul(self, other: f32) -> Vec3 {
-        Vec3(self.0 * other)
+        Vec3(self.0 * f32x4::splat(other))
     }
 }
 
 impl Mul<Vec3> for f32 {
     type Output = Vec3;
     fn mul(self, other: Vec3) -> Vec3 {
-        Vec3(self * other.0)
+        Vec3(f32x4::splat(self) * other.0)
     }
 }
 
 impl Div<f32> for Vec3 {
     type Output = Vec3;
     fn div(self, other: f32) -> Vec3 {
-        Vec3(self.0 / other)
+        Vec3(self.0 / f32x4::splat(other))
     }
 }
 
@@ -201,8 +201,7 @@ impl From<f32x4> for Vec3 {
 
 impl From<Point3> for Vec3 {
     fn from(p: Point3) -> Self {
-        // Vec3::new(p.x, p.y, p.z)
-        Vec3(p.0.replace(3, 0.0))
+        Vec3(p.0 * Vec3::MASK)
     }
 }
 
