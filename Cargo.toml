@@ -1,6 +1,6 @@
 [package]
 name = "math"
-version = "2.1.1"
+version = "2.0.0"
 authors = ["Gillett Hernandez <gillett.hernandez@gmail.com>"]
 edition = "2018"
 
