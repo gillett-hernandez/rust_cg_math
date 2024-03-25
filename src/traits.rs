@@ -3,7 +3,7 @@ pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    ops::{AddAssign, MulAssign},
+    ops::{AddAssign, MulAssign}, simd::f32x2,
 };
 
 // TODO: figure out if it's necessary to create a separate trait for the support of a measure,
