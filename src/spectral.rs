@@ -22,18 +22,21 @@ pub fn z_bar(angstroms: f32) -> f32 {
         + gaussian(angstroms.into(), 0.681, 4590.0, 260.0, 138.0)) as f32
 }
 
-#[cfg(feature = "simd_math_extensions")]
+
+#[cfg(feature="simdfloat_patch")]
 pub fn x_bar_f32x4(angstroms: f32x4) -> f32x4 {
     gaussian_f32x4(angstroms, 1.056, 5998.0, 379.0, 310.0)
         + gaussian_f32x4(angstroms, 0.362, 4420.0, 160.0, 267.0)
         + gaussian_f32x4(angstroms, -0.065, 5011.0, 204.0, 262.0)
 }
-#[cfg(feature = "simd_math_extensions")]
+
+#[cfg(feature="simdfloat_patch")]
 pub fn y_bar_f32x4(angstroms: f32x4) -> f32x4 {
     gaussian_f32x4(angstroms, 0.821, 5688.0, 469.0, 405.0)
         + gaussian_f32x4(angstroms, 0.286, 5309.0, 163.0, 311.0)
 }
-#[cfg(feature = "simd_math_extensions")]
+
+#[cfg(feature="simdfloat_patch")]
 pub fn z_bar_f32x4(angstroms: f32x4) -> f32x4 {
     gaussian_f32x4(angstroms, 1.217, 4370.0, 118.0, 360.0)
         + gaussian_f32x4(angstroms, 0.681, 4590.0, 260.0, 138.0)
@@ -71,7 +74,8 @@ impl From<WavelengthEnergy<f32, f32>> for XYZColor {
         )
     }
 }
-#[cfg(feature = "simd_math_extensions")]
+
+#[cfg(feature="simdfloat_patch")]
 impl From<WavelengthEnergy<f32x4, f32x4>> for XYZColor {
     fn from(we: WavelengthEnergy<f32x4, f32x4>) -> Self {
         let angstroms = we.lambda * f32x4::splat(10.0);

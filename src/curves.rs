@@ -4,8 +4,8 @@ use crate::spectral::{x_bar, y_bar, z_bar};
 
 use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
-use std::simd::num::SimdUint;
 use std::simd::usizex4;
+use std::simd::num::SimdUint;
 
 const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 
@@ -403,7 +403,7 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
     }
 }
 
-#[cfg(feature = "simd_math_extensions")]
+#[cfg(feature="simdfloat_patch")]
 impl SpectralPowerDistributionFunction<f32x4> for Curve {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         match &self {
@@ -622,7 +622,8 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
 }
 
 // TODO: figure out how to use SMIS/CMIS for these sample functions, especially with CurveWithCDF
-#[cfg(feature = "simd_math_extensions")]
+
+#[cfg(feature="simdfloat_patch")]
 impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         self.pdf.evaluate_power(lambda)
@@ -773,8 +774,9 @@ mod test {
     fn test_curve_exponential() {}
     #[test]
     fn test_curve_inverse_exponential() {}
-    #[cfg(feature = "simd_math_extensions")]
+
     #[test]
+    #[cfg(feature="simdfloat_patch")]
     fn test_curve_polynomial() {
         let curve = Curve::Polynomial {
             domain_range_mapping: f32x4::from_array([600.0, 200.0, 0.5, 0.06]),
@@ -999,7 +1001,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "simd_math_extensions")]
+    #[cfg(feature="simdfloat_patch")]
     fn test_cdf_sample_hwss() {
         let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![

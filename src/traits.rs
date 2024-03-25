@@ -283,6 +283,47 @@ impl FromScalar<f32> for f32 {
     }
 }
 
+
+#[cfg(feature = "simdfloat_patch")]
+pub trait SimdFloatPatch {
+    fn exp(self) -> Self;
+    fn powf(self, other: Self) -> Self;
+}
+
+#[cfg(feature = "simdfloat_patch")]
+impl SimdFloatPatch for f32x2 {
+    fn exp(mut self) -> Self {
+        self[0] = self[0].exp();
+        self[1] = self[1].exp();
+        self
+    }
+    fn powf(mut self, power: f32x2) -> Self {
+        self[0] = self[0].powf(power[0]);
+        self[1] = self[1].powf(power[1]);
+        self
+    }
+}
+
+
+#[cfg(feature = "simdfloat_patch")]
+impl SimdFloatPatch for f32x4 {
+    fn exp(mut self) -> Self {
+        self[0] = self[0].exp();
+        self[1] = self[1].exp();
+        self[2] = self[2].exp();
+        self[3] = self[3].exp();
+        self
+    }
+    fn powf(mut self, power: f32x4) -> Self {
+        self[0] = self[0].powf(power[0]);
+        self[1] = self[1].powf(power[1]);
+        self[2] = self[2].powf(power[2]);
+        self[3] = self[3].powf(power[3]);
+        self
+    }
+}
+
+
 #[cfg(test)]
 mod test {
     use std::f32::consts::TAU;
@@ -370,7 +411,6 @@ mod test {
         }
         (estimate / n, sos_estimate / n)
     }
-    use super::*;
     #[test]
     fn test_mc_integrate() {
         let (estimate, square_estimate) = mc_integrate(

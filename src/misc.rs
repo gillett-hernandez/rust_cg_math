@@ -16,14 +16,17 @@ pub fn gaussianf32(x: f32, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32
 pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
     let sqrt = (x - mu) / (if x < mu { sigma1 } else { sigma2 });
     alpha * (-(sqrt * sqrt) / 2.0).exp()
+
 }
 
-#[cfg(feature = "simd_math_extensions")]
+#[cfg(feature="simdfloat_patch")]
 pub fn gaussian_f32x4(x: f32x4, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32x4 {
     let sqrt = (x - f32x4::splat(mu))
         / x.simd_lt(f32x4::splat(mu))
             .select(f32x4::splat(sigma1), f32x4::splat(sigma2));
+
     f32x4::splat(alpha) * (-(sqrt * sqrt) / f32x4::splat(2.0)).exp()
+
 }
 
 pub fn w(x: f32, mul: f32, offset: f32, sigma: f32) -> f32 {
@@ -39,7 +42,7 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
     lambda.powi(-5) * HCC2 / ((HKC / (lambda * temperature)).exp() - 1.0)
 }
 
-#[cfg(feature = "simd_math_extensions")]
+#[cfg(feature="simdfloat_patch")]
 pub fn blackbody_f32x4(temperature: f32, lambda: f32x4) -> f32x4 {
     let lambda = lambda * f32x4::splat(1e-9);
 
@@ -77,7 +80,6 @@ pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::sample::Sample2D;
 
     #[test]
     fn test_direction_to_uv() {

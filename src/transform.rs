@@ -1,6 +1,5 @@
 use crate::prelude::*;
 
-use nalgebra;
 use std::ops::IndexMut;
 use std::simd::{f32x16, simd_swizzle};
 
