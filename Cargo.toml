@@ -24,7 +24,7 @@ serde_json = "~1.0"
 
 [features]
 # feature flag to bring in a custom trait that adds .exp and .powf methods to f32x4.
-# temporary fix pending https://github.com/rust-lang/portable-simd/pull/400 being brought into the rust nightly\
+# temporary fix pending https://github.com/rust-lang/portable-simd/pull/400 being brought into the rust nightly
 default = ["simdfloat_patch"]
 simdfloat_patch = []
 

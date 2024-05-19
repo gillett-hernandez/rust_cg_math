@@ -3,7 +3,8 @@ pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    ops::{AddAssign, MulAssign}, simd::f32x2,
+    ops::{AddAssign, MulAssign},
+    simd::f32x2,
 };
 
 // TODO: figure out if it's necessary to create a separate trait for the support of a measure,
@@ -283,20 +284,13 @@ impl FromScalar<f32> for f32 {
     }
 }
 
-
 #[cfg(feature = "simdfloat_patch")]
 pub trait SimdFloatPatch {
-    fn exp(self) -> Self;
     fn powf(self, other: Self) -> Self;
 }
 
 #[cfg(feature = "simdfloat_patch")]
 impl SimdFloatPatch for f32x2 {
-    fn exp(mut self) -> Self {
-        self[0] = self[0].exp();
-        self[1] = self[1].exp();
-        self
-    }
     fn powf(mut self, power: f32x2) -> Self {
         self[0] = self[0].powf(power[0]);
         self[1] = self[1].powf(power[1]);
@@ -304,16 +298,8 @@ impl SimdFloatPatch for f32x2 {
     }
 }
 
-
 #[cfg(feature = "simdfloat_patch")]
 impl SimdFloatPatch for f32x4 {
-    fn exp(mut self) -> Self {
-        self[0] = self[0].exp();
-        self[1] = self[1].exp();
-        self[2] = self[2].exp();
-        self[3] = self[3].exp();
-        self
-    }
     fn powf(mut self, power: f32x4) -> Self {
         self[0] = self[0].powf(power[0]);
         self[1] = self[1].powf(power[1]);
@@ -322,7 +308,6 @@ impl SimdFloatPatch for f32x4 {
         self
     }
 }
-
 
 #[cfg(test)]
 mod test {
