@@ -3,21 +3,26 @@ use crate::prelude::*;
 use crate::spectral::{x_bar, y_bar, z_bar};
 
 use ordered_float::OrderedFloat;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::simd::usizex4;
 use std::simd::num::SimdUint;
+use std::simd::usizex4;
 
 const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 
 // structs
 
 #[derive(Debug, PartialEq, Copy, Clone)]
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
 pub enum Op {
     Add,
     Mul,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Copy, Clone)]
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
 pub enum InterpolationMode {
     Linear,
     Nearest,
@@ -38,6 +43,8 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
 pub enum Curve {
     Const(f32),
     Linear {
@@ -58,7 +65,7 @@ pub enum Curve {
     // and a y_offset of whatever you want is decent for power functions. note: negative reflectances or power are not allowed, and outputs are clamped above 0.
     Polynomial {
         // packed as x_offset, x_scale, y_offset, y_scale
-        domain_range_mapping: f32x4,
+        domain_range_mapping: [f32; 4],
         coefficients: [f32; 8],
     },
     Cauchy {
@@ -403,7 +410,7 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
     }
 }
 
-#[cfg(feature="simdfloat_patch")]
+#[cfg(feature = "simdfloat_patch")]
 impl SpectralPowerDistributionFunction<f32x4> for Curve {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         match &self {
@@ -623,7 +630,7 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
 
 // TODO: figure out how to use SMIS/CMIS for these sample functions, especially with CurveWithCDF
 
-#[cfg(feature="simdfloat_patch")]
+#[cfg(feature = "simdfloat_patch")]
 impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
     fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
         self.pdf.evaluate_power(lambda)
@@ -776,10 +783,10 @@ mod test {
     fn test_curve_inverse_exponential() {}
 
     #[test]
-    #[cfg(feature="simdfloat_patch")]
+    #[cfg(feature = "simdfloat_patch")]
     fn test_curve_polynomial() {
         let curve = Curve::Polynomial {
-            domain_range_mapping: f32x4::from_array([600.0, 200.0, 0.5, 0.06]),
+            domain_range_mapping: [600.0, 200.0, 0.5, 0.06],
             coefficients: [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0],
         };
 
@@ -1001,7 +1008,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature="simdfloat_patch")]
+    #[cfg(feature = "simdfloat_patch")]
     fn test_cdf_sample_hwss() {
         let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![
