@@ -388,10 +388,10 @@ impl Curve {
 
 impl SpectralPowerDistributionFunction<f32> for Curve {
     fn evaluate_power(&self, lambda: f32) -> f32 {
-        self.evaluate(lambda)
+        self.evaluate(lambda).max(0.0)
     }
     fn evaluate_clamped(&self, lambda: f32) -> f32 {
-        self.evaluate(lambda).min(ONE_SUB_EPSILON)
+        self.evaluate(lambda).clamp(0.0, ONE_SUB_EPSILON)
     }
     fn sample_power_and_pdf(
         &self,
@@ -505,7 +505,8 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
     }
 
     fn evaluate_clamped(&self, lambda: f32x4) -> f32x4 {
-        self.evaluate_power(lambda).min(f32x4::ONE)
+        self.evaluate_power(lambda)
+            .simd_clamp(f32x4::ZERO, f32x4::ONE)
     }
 
     fn sample_power_and_pdf(
@@ -526,6 +527,8 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
 }
 
 #[derive(Debug, Clone, Default)]
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
 pub struct CurveWithCDF {
     // pdf range is [0, infinity), though actual infinite values are not handled yet, and if they were it would be through special handling as dirac delta distributions
     pub pdf: Curve,
@@ -540,7 +543,7 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
         self.pdf.evaluate(lambda)
     }
     fn evaluate_clamped(&self, lambda: f32) -> f32 {
-        self.pdf.evaluate(lambda).min(ONE_SUB_EPSILON)
+        self.pdf.evaluate_clamped(lambda)
     }
     fn sample_power_and_pdf(
         &self,
