@@ -536,6 +536,8 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
 #[derive(Debug, Clone, Default)]
 #[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
+#[cfg(feature = "deepsize")]
+#[derive(DeepSizeOf)]
 pub struct CurveWithCDF {
     // pdf range is [0, infinity), though actual infinite values are not handled yet, and if they were it would be through special handling as dirac delta distributions
     pub pdf: Curve,
