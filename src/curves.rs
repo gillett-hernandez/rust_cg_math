@@ -2,6 +2,8 @@ use crate::prelude::*;
 
 use crate::spectral::{x_bar, y_bar, z_bar};
 
+#[cfg(feature = "deepsize")]
+use deepsize::DeepSizeOf;
 use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,8 @@ const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 #[derive(Debug, PartialEq, Copy, Clone)]
 #[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
+#[cfg(feature = "deepsize")]
+#[derive(DeepSizeOf)]
 pub enum Op {
     Add,
     Mul,
@@ -23,6 +27,8 @@ pub enum Op {
 #[derive(Debug, PartialEq, Copy, Clone)]
 #[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
+#[cfg(feature = "deepsize")]
+#[derive(DeepSizeOf)]
 pub enum InterpolationMode {
     Linear,
     Nearest,
@@ -45,48 +51,49 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
 #[derive(Debug, Clone)]
 #[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
+#[cfg(feature = "deepsize")]
+#[derive(DeepSizeOf)]
 pub enum Curve {
+    /// f(x) = C
+    /// no variation across the domain
     Const(f32),
+    /// Linearly spaced samples, across a specific domain. Also takes an interpolation mode so that various curve shapes can be represented
     Linear {
         signal: Vec<f32>,
         bounds: Bounds1D,
         mode: InterpolationMode,
     },
+    /// Tabulated samples, each item in signal represents an (x,y) pair. This vec is assumed to be sorted.
     Tabulated {
         signal: Vec<(f32, f32)>,
         mode: InterpolationMode,
     },
-    // f = {
-    //   x = (input - x_offset) / x_scale
-    //   y = (0..8).map(|i| coefficients[i] * x.powi(i)).sum() * y_scale + y_offset
-    // a decent value for an SPD would be 600 for x_offset, and 200 for x_scale,
-    // since that leads to a normalized x input of -1 on the low end of the spectrum and +1 on the high end
-    // also, a y_offset of about 0.5 is a decent starting point for reflectance functions
-    // and a y_offset of whatever you want is decent for power functions. note: negative reflectances or power are not allowed, and outputs are clamped above 0.
+    /// An 8th degree polynomial, with the const offset term stored in `domain_range_mapping`.
+    /// A good value for the x_offset and x_scale for an input x value of light wavelength in the visible range in nanometers
+    /// is roughly 600 offset, 200 scale. thus, 400 is mapped to -1 and 800 is mapped to 1
     Polynomial {
-        // packed as x_offset, x_scale, y_offset, y_scale
+        /// packed as x_offset, x_scale, y_offset, y_scale
         domain_range_mapping: [f32; 4],
         coefficients: [f32; 8],
     },
-    Cauchy {
-        a: f32,
-        b: f32,
-    },
-    // offset, sigma1, sigma2, mult
-    Exponential {
-        signal: Vec<(f32, f32, f32, f32)>,
-    },
-    InverseExponential {
-        signal: Vec<(f32, f32, f32, f32)>,
-    },
-    Blackbody {
-        temperature: f32,
-        boost: f32,
-    },
-    Machine {
-        seed: f32,
-        list: Vec<(Op, Curve)>,
-    },
+    /// [Cauchy's equation](https://en.wikipedia.org/wiki/Cauchy%27s_equation)
+    Cauchy { a: f32, b: f32 },
+    /// Each entry of signal is (offset, sigma1, sigma2, mult) which represents a nonsymmetric bell curve
+    /// centered at `offset`, with `sigma1` as the left std deviation, `sigma2` as the right standard deviation, and `mult` as the multiplier
+    /// in pseudocode, f(x) = 1.0 - sum_i^n bell_curve[i].eval(x)
+    Exponential { signal: Vec<(f32, f32, f32, f32)> },
+    /// Each entry of signal is (offset, sigma1, sigma2, mult) which represents a nonsymmetric bell curve
+    /// centered at `offset`, with `sigma1` as the left std deviation, `sigma2` as the right standard deviation, and `mult` as the multiplier
+    /// however each bell curve is actually subtracted from a baseline of 1.0,
+    /// in pseudocode, f(x) = 1.0 - sum_i^n bell_curve[i].eval(x)
+    InverseExponential { signal: Vec<(f32, f32, f32, f32)> },
+    /// Represents a blackbody curve at a specific `temperature`, boosted by `boost`. if `boost` is 1.0, the curve is normalized to be 1.0 at the peak energy emitting wavelength in nm.
+    Blackbody { temperature: f32, boost: f32 },
+    /// Represents a ordered list of operations applied to a seed value,
+    /// with Op being either Add or Mul of some other `Curve`,
+    /// where Op::Mul is elementwise multiplication and Op::Add is elementwise addition
+    /// Note that any of the member `Curve`s can themselves be another Machine,
+    Machine { seed: f32, list: Vec<(Op, Curve)> },
 }
 
 impl Default for Curve {
@@ -769,21 +776,57 @@ mod test {
     }
 
     #[test]
-    fn test_curve_const() {}
+    fn test_curve_const() {
+        let test_curve = Curve::Const(0.5);
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
     #[test]
-    fn test_curve_tabulated() {}
+    fn test_curve_tabulated() {
+        let test_curve = Curve::Tabulated {
+            signal: vec![],
+            mode: InterpolationMode::Linear,
+        };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
     #[test]
-    fn test_curve_linear() {}
+    fn test_curve_linear() {
+        let test_curve = Curve::Linear {
+            signal: vec![],
+            bounds: Bounds1D::new(400.0, 800.0),
+            mode: InterpolationMode::Linear,
+        };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
     #[test]
-    fn test_curve_cauchy() {}
+    fn test_curve_cauchy() {
+        let test_curve = Curve::Cauchy { a: 1.4, b: 2400.0 };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 100, false);
+        assert_eq!(integral / 400.0, 1.4075);
+    }
     #[test]
-    fn test_curve_spike() {}
+    fn test_curve_blackbody() {
+        let test_curve = Curve::Blackbody {
+            temperature: 5400.0,
+            boost: 1.0,
+        };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
     #[test]
-    fn test_curve_blackbody() {}
+    fn test_curve_exponential() {
+        let test_curve = Curve::Exponential { signal: todo!() };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
     #[test]
-    fn test_curve_exponential() {}
-    #[test]
-    fn test_curve_inverse_exponential() {}
+    fn test_curve_inverse_exponential() {
+        let test_curve = Curve::InverseExponential { signal: todo!() };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
+        assert_eq!(integral, 50.0);
+    }
 
     #[test]
     #[cfg(feature = "simdfloat_patch")]

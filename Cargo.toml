@@ -16,6 +16,7 @@ ordered-float = "~4.2"
 rand = "~0.8"
 rayon = "~1.10"
 serde = { version = "~1.0", features = ["derive"], optional = true }
+deepsize = { version = "~0.2", optional = true }
 
 [build-dependencies]
 serde_json = { version = "~1.0" }
@@ -24,6 +25,7 @@ serde = { version = "~1.0", features = ["derive"], optional = true }
 [features]
 default = ["simdfloat_patch", "serde"]
 serde = ["dep:serde"]
+deepsize = ["dep:deepsize"]
 # feature flag to bring in a custom trait that adds .exp and .powf methods to f32x4.
 # temporary fix pending https://github.com/rust-lang/portable-simd/pull/400 being brought into the rust nightly
 simdfloat_patch = []
