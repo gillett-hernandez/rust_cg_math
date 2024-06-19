@@ -1,12 +1,14 @@
 // use std::simd::{f32x4, f32x8};
 use crate::prelude::*;
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
 use std::ops::{MulAssign, Sub};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Axis {
     X,
     Y,

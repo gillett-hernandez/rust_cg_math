@@ -4,10 +4,8 @@ use deepsize::DeepSizeOf;
 use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub struct Bounds1D {
     pub lower: f32,
     pub upper: f32,
@@ -41,10 +39,8 @@ impl Bounds1D {
 }
 
 #[derive(Copy, Clone, Debug)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub struct Bounds2D {
     pub x: Bounds1D,
     pub y: Bounds1D,

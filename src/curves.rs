@@ -15,20 +15,16 @@ const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 // structs
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub enum Op {
     Add,
     Mul,
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub enum InterpolationMode {
     Linear,
     Nearest,
@@ -49,10 +45,8 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
 }
 
 #[derive(Debug, Clone)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub enum Curve {
     /// f(x) = C
     /// no variation across the domain
@@ -534,10 +528,8 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
 }
 
 #[derive(Debug, Clone, Default)]
-#[cfg(feature = "serde")]
-#[derive(Deserialize, Serialize)]
-#[cfg(feature = "deepsize")]
-#[derive(DeepSizeOf)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
 pub struct CurveWithCDF {
     // pdf range is [0, infinity), though actual infinite values are not handled yet, and if they were it would be through special handling as dirac delta distributions
     pub pdf: Curve,

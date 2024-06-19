@@ -20,9 +20,11 @@ pub mod vec;
 
 use std::fmt::Debug;
 
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Debug)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Sidedness {
     Forward,
     Reverse,

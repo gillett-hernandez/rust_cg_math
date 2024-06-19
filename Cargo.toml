@@ -29,11 +29,3 @@ deepsize = ["dep:deepsize"]
 # feature flag to bring in a custom trait that adds .exp and .powf methods to f32x4.
 # temporary fix pending https://github.com/rust-lang/portable-simd/pull/400 being brought into the rust nightly
 simdfloat_patch = []
-
-[profile.dev]
-opt-level = 3
-panic = 'abort'
-debug = true
-
-[profile.test]
-opt-level = 0
