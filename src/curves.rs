@@ -41,7 +41,7 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (WavelengthEnergy<T, T>, PDF<T, Uniform01>);
+    ) -> (WavelengthEnergy<T, T>, PDF<T, Length>);
 }
 
 #[derive(Debug, Clone)]
@@ -398,7 +398,7 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (SingleWavelength, PDF<f32, Uniform01>) {
+    ) -> (SingleWavelength, PDF<f32, Length>) {
         match &self {
             _ => {
                 let ws = SingleWavelength::new_from_range(sample.x, wavelength_range);
@@ -514,7 +514,7 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (HeroWavelength, PDF<f32x4, Uniform01>) {
+    ) -> (HeroWavelength, PDF<f32x4, Length>) {
         match &self {
             _ => {
                 let ws = HeroWavelength::new_from_range(sample.x, wavelength_range);
@@ -550,7 +550,7 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
         &self,
         wavelength_range: Bounds1D,
         mut sample: Sample1D,
-    ) -> (SingleWavelength, PDF<f32, Uniform01>) {
+    ) -> (SingleWavelength, PDF<f32, Length>) {
         match &self.cdf {
             Curve::Const(v) => (
                 SingleWavelength::new(wavelength_range.sample(sample.x), (*v).into()),
@@ -646,7 +646,7 @@ impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
         &self,
         wavelength_range: Bounds1D,
         mut sample: Sample1D,
-    ) -> (HeroWavelength, PDF<f32x4, Uniform01>) {
+    ) -> (HeroWavelength, PDF<f32x4, Length>) {
         match &self.cdf {
             Curve::Const(v) => (
                 HeroWavelength::new_from_range(sample.x, wavelength_range)

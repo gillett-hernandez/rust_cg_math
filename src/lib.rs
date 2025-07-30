@@ -1,20 +1,20 @@
 #![feature(portable_simd)]
 #![warn(rust_2018_idioms, rust_2021_compatibility)]
 
-pub mod prelude;
-pub mod traits;
-
 pub mod bounds;
 pub mod color;
 pub mod curves;
 pub mod misc;
 pub mod pdf;
 pub mod point;
+pub mod prelude;
 pub mod random;
 pub mod ray;
 pub mod sample;
+pub mod spaces;
 pub mod spectral;
 pub mod tangent_frame;
+pub mod traits;
 pub mod transform;
 pub mod vec;
 

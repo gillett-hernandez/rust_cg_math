@@ -2,7 +2,7 @@
 name = "math"
 version = "2.1.0"
 authors = ["Gillett Hernandez <gillett.hernandez@gmail.com>"]
-edition = "2018"
+edition = "2024"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,7 +12,7 @@ edition = "2018"
 num-traits = "~0.2"
 nalgebra = "~0.32"
 num_cpus = "~1"
-ordered-float = "~4.2"
+ordered-float = "~4.6"
 rand = "~0.8"
 rayon = "~1.10"
 serde = { version = "~1.0", features = ["derive"], optional = true }

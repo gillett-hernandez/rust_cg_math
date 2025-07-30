@@ -5,6 +5,8 @@ pub fn debug_random() -> f32 {
     rand::random()
 }
 
+/// theoretically, this is uniformly distributed wrt the volume measure.
+/// testable by confirming that the monte carlo estimate with these samples is equal to the volume of a sphere,  4/3 * pi
 pub fn random_in_unit_sphere(r: Sample3D) -> Vec3 {
     let u = r.x * PI * 2.0;
     let v = (2.0 * r.y - 1.0).acos();
@@ -12,6 +14,7 @@ pub fn random_in_unit_sphere(r: Sample3D) -> Vec3 {
     Vec3::new(u.cos() * v.sin() * w, v.cos() * w, u.sin() * v.sin() * w)
 }
 
+/// theoretically, this is uniformly distributed wrt the surface area / solid angle measure
 pub fn random_on_unit_sphere(r: Sample2D) -> Vec3 {
     let Sample2D { x, y } = r;
 
@@ -24,19 +27,23 @@ pub fn random_on_unit_sphere(r: Sample2D) -> Vec3 {
     Vec3::new(r * c, r * s, z)
 }
 
+/// theoretically, this is uniformly distributed wrt the area measure
 pub fn random_in_unit_disk(r: Sample2D) -> Vec3 {
     let u: f32 = r.x * PI * 2.0;
     let v: f32 = r.y.powf(1.0 / 2.0);
     Vec3::new(u.cos() * v, u.sin() * v, 0.0)
 }
 
+/// returns a random direction (unit vector) in the positive Z hemisphere, distributed according to the cosine distribution.
+/// theoretically, this is uniformly distributed wrt the projected solid angle measure.
 pub fn random_cosine_direction(r: Sample2D) -> Vec3 {
     let Sample2D { x: u, y: v } = r;
     let z: f32 = (1.0 - v).sqrt();
     let phi: f32 = 2.0 * PI * u;
     let (mut y, mut x) = phi.sin_cos();
-    x *= v.sqrt();
-    y *= v.sqrt();
+    let vsqrt = v.sqrt();
+    x *= vsqrt;
+    y *= vsqrt;
     Vec3::new(x, y, z)
 }
 
