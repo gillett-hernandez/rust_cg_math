@@ -1,8 +1,10 @@
 use crate::prelude::*;
 pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
+    arch::aarch64::float32x4x3_t,
     cmp::Ordering,
     fmt::Debug,
+    num::NonZero,
     ops::{AddAssign, MulAssign},
     simd::f32x2,
 };
@@ -14,16 +16,50 @@ use std::{
 // TODO: implement a sampling trait that allows for sampling within a specified set that is a member of the support of a measure
 // i.e. sample uniformly within an interval, sample uniformly within a set of directions, or within a volume, etc
 
-#[allow(unused_variables)]
-pub trait Measure: Copy + Clone + Debug + Default + Sized {
-    fn combine(self, other: Self) -> Self {
-        Self::default()
-    }
+pub trait SpaceParameterization {
+    type Set;
+    type Element;
 }
 
 #[allow(unused_variables)]
-pub trait CombineMeasure<T: Measure>: Measure {
-    fn combine_with(self, other: T) -> Self;
+pub trait Measure {
+    type Space: SpaceParameterization;
+    /// measure a set
+    fn measure(set: Self::Space::Set) -> f32;
+    /// differential measure at a point. if the space/parameterization is uniform, then the differential measure will just be 1.
+    /// if the space/parameterization is uniform and the measure is a pdf, then the differential measure will likely just be 1 / mu(Omega)
+    /// where mu is the measure and Omega is the entire space over which the pdf is defined
+    fn differential_measure(element: Self::Space::Element) -> f32;
+}
+
+pub struct ProductSet<A: SpaceParameterization, B: SpaceParameterization> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: SpaceParameterization, B: SpaceParameterization> SpaceParameterization
+    for ProductSet<A, B>
+{
+    type Set = (A::Set, B::Set);
+    type Element = (A::Element, B::Element);
+}
+
+#[allow(unused_variables)]
+pub struct ProductMeasure<A: Measure, B: Measure> {
+    pub a: A,
+    pub b: B,
+}
+type Set<M> = <<M as Measure>::Space as SpaceParameterization>::Set;
+type Element<M> = <<M as Measure>::Space as SpaceParameterization>::Element;
+impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
+    type Space = ProductSet<A::Space, B::Space>;
+
+    fn measure(set: Set<Self>) -> f32 {
+        A::measure(set.0) * B::measure(set.1)
+    }
+    fn differential_measure(element: Element<Self>) -> f32 {
+        A::differential_measure(element.0) * B::differential_measure(element.1)
+    }
 }
 
 /// solid angle measure, defined on the set of directions
@@ -33,7 +69,7 @@ pub trait CombineMeasure<T: Measure>: Measure {
 ///      = d[cos theta] d[phi]
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SolidAngle {}
-impl Measure for SolidAngle {}
+//impl Measure for SolidAngle {}
 
 /// projected solid angle measure, defined on the set of directions
 /// the measure of a whole hemisphere is pi
@@ -44,22 +80,22 @@ impl Measure for SolidAngle {}
 ///      = sin(theta) d[sin(theta)] dphi
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProjectedSolidAngle {}
-impl Measure for ProjectedSolidAngle {}
+//impl Measure for ProjectedSolidAngle {}
 
 /// basic length measure
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Length {}
-impl Measure for Length {}
+//impl Measure for Length {}
 
 /// area measure, the standard one formed by the product measure of two standard lebesgue length measures
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Area {}
-impl Measure for Area {}
+//impl Measure for Area {}
 
 /// volume measure, the standard one formed by the product measure of three standard lebesgue length measures
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Volume {}
-impl Measure for Volume {}
+//impl Measure for Volume {}
 
 /// throughput measure, also known as the geometric measure on ray space in veach's thesis
 /// measures the light-carrying capacity of a set of rays
@@ -69,7 +105,7 @@ impl Measure for Volume {}
 ///      = |w . N| * differential area * differential solid angle
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Throughput {}
-impl Measure for Throughput {}
+//impl Measure for Throughput {}
 
 /// the path throughput measure is the product measure of multiple normal Throughput measures, determined by the rank
 #[derive(Debug, Copy, Clone)]
@@ -83,7 +119,7 @@ impl Default for PathThroughput {
     }
 }
 
-impl Measure for PathThroughput {
+/*impl Measure for PathThroughput {
     fn combine(self, other: Self) -> Self {
         Self {
             rank: self.rank + other.rank,
@@ -97,7 +133,7 @@ impl CombineMeasure<Throughput> for PathThroughput {
             rank: self.rank + 1,
         }
     }
-}
+}*/
 
 // misc traits
 pub trait Abs {

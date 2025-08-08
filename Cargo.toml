@@ -17,6 +17,7 @@ rand = "~0.8"
 rayon = "~1.10"
 serde = { version = "~1.0", features = ["derive"], optional = true }
 deepsize = { version = "~0.2", optional = true }
+typenum = "1.18.0"
 
 [build-dependencies]
 serde_json = { version = "~1.0" }

@@ -14,6 +14,7 @@ pub mod sample;
 pub mod spaces;
 pub mod spectral;
 pub mod tangent_frame;
+mod test;
 pub mod traits;
 pub mod transform;
 pub mod vec;
