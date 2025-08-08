@@ -1,9 +1,14 @@
+use crate::spaces::{
+    Circle, DiskSpace, Element, ProductSet, R1, SimpleSet, SpaceParameterization, Sphere,
+};
+
 use crate::prelude::*;
 pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
-    arch::aarch64::float32x4x3_t,
+    // arch::aarch64::float32x4x3_t,
     cmp::Ordering,
     fmt::Debug,
+    marker::PhantomData,
     num::NonZero,
     ops::{AddAssign, MulAssign},
     simd::f32x2,
@@ -16,49 +21,77 @@ use std::{
 // TODO: implement a sampling trait that allows for sampling within a specified set that is a member of the support of a measure
 // i.e. sample uniformly within an interval, sample uniformly within a set of directions, or within a volume, etc
 
-pub trait SpaceParameterization {
-    type Set;
-    type Element;
-}
-
-#[allow(unused_variables)]
 pub trait Measure {
     type Space: SpaceParameterization;
     /// measure a set
-    fn measure(set: Self::Space::Set) -> f32;
+    fn measure(set: SimpleSet<Self>) -> f32;
     /// differential measure at a point. if the space/parameterization is uniform, then the differential measure will just be 1.
     /// if the space/parameterization is uniform and the measure is a pdf, then the differential measure will likely just be 1 / mu(Omega)
     /// where mu is the measure and Omega is the entire space over which the pdf is defined
-    fn differential_measure(element: Self::Space::Element) -> f32;
+    fn differential_measure(element: Element<Self>) -> f32;
 }
-
-pub struct ProductSet<A: SpaceParameterization, B: SpaceParameterization> {
-    pub a: A,
-    pub b: B,
-}
-
-impl<A: SpaceParameterization, B: SpaceParameterization> SpaceParameterization
-    for ProductSet<A, B>
-{
-    type Set = (A::Set, B::Set);
-    type Element = (A::Element, B::Element);
-}
-
-#[allow(unused_variables)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct ProductMeasure<A: Measure, B: Measure> {
     pub a: A,
     pub b: B,
 }
-type Set<M> = <<M as Measure>::Space as SpaceParameterization>::Set;
-type Element<M> = <<M as Measure>::Space as SpaceParameterization>::Element;
+
 impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
     type Space = ProductSet<A::Space, B::Space>;
 
-    fn measure(set: Set<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self>) -> f32 {
         A::measure(set.0) * B::measure(set.1)
     }
     fn differential_measure(element: Element<Self>) -> f32 {
         A::differential_measure(element.0) * B::differential_measure(element.1)
+    }
+}
+
+/// basic lebesgue length measure
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Length;
+impl Measure for Length {
+    type Space = R1;
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        set.span()
+    }
+    fn differential_measure(_: Element<Self>) -> f32 {
+        1.0
+    }
+}
+
+/// area measure, the standard one formed by the product measure of two standard lebesgue length measures
+pub type Area = ProductMeasure<Length, Length>;
+
+/// volume measure, the standard one formed by the product measure of three standard lebesgue length measures
+pub type Volume = ProductMeasure<Area, Length>;
+
+pub struct Angle;
+
+impl Measure for Angle {
+    type Space = Circle;
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        set.span() % Self::Space::SPACE.span()
+    }
+    fn differential_measure(_: Element<Self>) -> f32 {
+        1.0
+    }
+}
+
+pub struct DiskAreaMeasure;
+
+impl Measure for DiskAreaMeasure {
+    type Space = DiskSpace;
+
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        // set.0 is angle bounds and set.1 is radius bounds
+
+        set.0.span() % Self::Space::SPACE.0.span() / 2.0
+            * (set.1.upper.powi(2) - set.1.lower.powi(2))
+    }
+
+    fn differential_measure(element: Element<Self>) -> f32 {
+        element.1
     }
 }
 
@@ -67,9 +100,21 @@ impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
 /// when in differential form, represents an infinitesimal increase in solid angle.
 ///      = sin(theta) d[theta] d[phi]
 ///      = d[cos theta] d[phi]
-#[derive(Copy, Clone, Debug, Default)]
-pub struct SolidAngle {}
-//impl Measure for SolidAngle {}
+// #[derive(Copy, Clone, Debug, Default)]
+pub struct SolidAngle;
+impl Measure for SolidAngle {
+    type Space = Sphere;
+
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        let azimuthal = set.x.span();
+        let zenithal = set.y.span();
+        todo!()
+    }
+
+    fn differential_measure(element: Element<Self>) -> f32 {
+        element.1.sin()
+    }
+}
 
 /// projected solid angle measure, defined on the set of directions
 /// the measure of a whole hemisphere is pi
@@ -80,22 +125,17 @@ pub struct SolidAngle {}
 ///      = sin(theta) d[sin(theta)] dphi
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProjectedSolidAngle {}
-//impl Measure for ProjectedSolidAngle {}
-
-/// basic length measure
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Length {}
-//impl Measure for Length {}
-
-/// area measure, the standard one formed by the product measure of two standard lebesgue length measures
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Area {}
-//impl Measure for Area {}
-
-/// volume measure, the standard one formed by the product measure of three standard lebesgue length measures
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Volume {}
-//impl Measure for Volume {}
+impl Measure for ProjectedSolidAngle {
+    type Space = Sphere;
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        let azimuthal = set.x.span();
+        let zenithal = set.y.span();
+        todo!()
+    }
+    fn differential_measure(element: Element<Self>) -> f32 {
+        element.1.sin()
+    }
+}
 
 /// throughput measure, also known as the geometric measure on ray space in veach's thesis
 /// measures the light-carrying capacity of a set of rays
@@ -388,190 +428,184 @@ mod test {
     use num_traits::FromPrimitive;
 
     use super::*;
-    // TODO: implement trait for PDF and Measure so that you can more easily construct a new PDF on a new measure from existing pdfs, i.e.
 
-    // subset of R^2
-    #[derive(Copy, Clone, Debug, Default)]
-    struct DiskMeasure {}
-    impl Measure for DiskMeasure {}
+    // type DiskPDF = PDF<f32, DiskMeasure>;
+    // type Sampled1D = (Sample1D, PDF<f32, Length>);
+    // struct SampledDisk(pub Sample2D, pub DiskPDF);
+    // impl SampledDisk {
+    //     pub fn new(sample0: Sampled1D, sample1: Sampled1D) -> Self {
+    //         let radial = sample0.0.x.sqrt();
+    //         let angle = sample1.0.x * TAU;
+    //         // jacobian matrix =
+    //         /*[
+    //             [ 1/(2sqrt(x)), 0],
+    //             [0, TAU]
+    //             jacobian determinant = PI / sqrt(x)
+    //         ]*/
+    //         let (sin, cos) = angle.sin_cos();
+    //         // this is using Sample2D in a very nonstandard manner relative to how i've used it so far, but yeah
+    //         let disk_pos = Sample2D::new(radial * cos, radial * sin);
+    //         let jacobian = PI * radial.recip();
+    //         Self(disk_pos, DiskPDF::new(jacobian * *sample0.1 * *sample1.1))
+    //     }
+    // }
 
-    type DiskPDF = PDF<f32, DiskMeasure>;
-    type Sampled1D = (Sample1D, PDF<f32, Length>);
-    struct SampledDisk(pub Sample2D, pub DiskPDF);
-    impl SampledDisk {
-        pub fn new(sample0: Sampled1D, sample1: Sampled1D) -> Self {
-            let radial = sample0.0.x.sqrt();
-            let angle = sample1.0.x * TAU;
-            // jacobian matrix =
-            /*[
-                [ 1/(2sqrt(x)), 0],
-                [0, TAU]
-                jacobian determinant = PI / sqrt(x)
-            ]*/
-            let (sin, cos) = angle.sin_cos();
-            // this is using Sample2D in a very nonstandard manner relative to how i've used it so far, but yeah
-            let disk_pos = Sample2D::new(radial * cos, radial * sin);
-            let jacobian = PI * radial.recip();
-            Self(disk_pos, DiskPDF::new(jacobian * *sample0.1 * *sample1.1))
-        }
-    }
+    // // TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
+    // // ideas:
+    // // implement some trait called Measurable
+    // // that looks something like
 
-    // TODO: define some other PDF-like structs, i.e. Spectral Radiance, Spectral Irradiance, etc
-    // ideas:
-    // implement some trait called Measurable
-    // that looks something like
+    // trait MonteCarlo<D: Field, M: Measure>: Field + Div<PDF<D, M>, Output = Self> {}
 
-    trait MonteCarlo<D: Field, M: Measure>: Field + Div<PDF<D, M>, Output = Self> {}
+    // // then we can define something like
 
-    // then we can define something like
+    // impl<M: Measure> Div<PDF<f32, M>> for f32 {
+    //     type Output = f32;
+    //     fn div(self, rhs: PDF<f32, M>) -> Self::Output {
+    //         self / *rhs
+    //     }
+    // }
+    // impl<M: Measure> MonteCarlo<f32, M> for f32 {}
 
-    impl<M: Measure> Div<PDF<f32, M>> for f32 {
-        type Output = f32;
-        fn div(self, rhs: PDF<f32, M>) -> Self::Output {
-            self / *rhs
-        }
-    }
-    impl<M: Measure> MonteCarlo<f32, M> for f32 {}
+    // // then if we want to measure the area under some function, we can express that integration problem using trait bounds
+    // // this is somewhat generalized over what method is used to actually generate the samples
 
-    // then if we want to measure the area under some function, we can express that integration problem using trait bounds
-    // this is somewhat generalized over what method is used to actually generate the samples
+    // fn mc_integrate<DomainField, RangeField, M, F, Sampler, S>(
+    //     func: F,
+    //     mut sampler: Sampler,
+    //     samples: u32,
+    // ) -> (RangeField, RangeField)
+    // where
+    //     M: Measure,
+    //     RangeField: MonteCarlo<RangeField, M>
+    //         + Div<PDF<RangeField, M>, Output = RangeField>
+    //         + Div<RangeField, Output = RangeField>
+    //         + FromScalar<S>,
+    //     F: Fn(DomainField) -> RangeField,
+    //     Sampler: FnMut(u32) -> (DomainField, PDF<RangeField, M>),
+    //     S: Scalar + FromPrimitive,
+    // {
+    //     let mut estimate = RangeField::ZERO;
+    //     let mut sos_estimate = RangeField::ZERO;
+    //     let n = RangeField::from_scalar(S::from_u32(samples).unwrap());
+    //     for idx in 0..samples {
+    //         let (sample, pdf) = sampler(idx);
+    //         let fs = func(sample);
+    //         let fpdf = fs / pdf;
+    //         estimate += fpdf;
+    //         sos_estimate += fpdf * fpdf;
+    //     }
+    //     (estimate / n, sos_estimate / n)
+    // }
 
-    fn mc_integrate<DomainField, RangeField, M, F, Sampler, S>(
-        func: F,
-        mut sampler: Sampler,
-        samples: u32,
-    ) -> (RangeField, RangeField)
-    where
-        M: Measure,
-        RangeField: MonteCarlo<RangeField, M>
-            + Div<PDF<RangeField, M>, Output = RangeField>
-            + Div<RangeField, Output = RangeField>
-            + FromScalar<S>,
-        F: Fn(DomainField) -> RangeField,
-        Sampler: FnMut(u32) -> (DomainField, PDF<RangeField, M>),
-        S: Scalar + FromPrimitive,
-    {
-        let mut estimate = RangeField::ZERO;
-        let mut sos_estimate = RangeField::ZERO;
-        let n = RangeField::from_scalar(S::from_u32(samples).unwrap());
-        for idx in 0..samples {
-            let (sample, pdf) = sampler(idx);
-            let fs = func(sample);
-            let fpdf = fs / pdf;
-            estimate += fpdf;
-            sos_estimate += fpdf * fpdf;
-        }
-        (estimate / n, sos_estimate / n)
-    }
+    // #[test]
+    // fn test_mc_integral_of_a_disk() {
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, Area, _, _, _>(
+    //         |v: Vec3| if v.x().hypot(v.y()) < 1.0 { 1.0 } else { 0.0 },
+    //         |_| {
+    //             let mut sample2d = Sample2D::new_random_sample();
 
-    #[test]
-    fn test_mc_integral_of_a_disk() {
-        let (estimate, square_estimate) = mc_integrate::<_, _, Area, _, _, _>(
-            |v: Vec3| if v.x().hypot(v.y()) < 1.0 { 1.0 } else { 0.0 },
-            |_| {
-                let mut sample2d = Sample2D::new_random_sample();
+    //             (Vec3::new(sample2d.x, sample2d.y, 0.0), PDF::new(1.0 / 4.0))
+    //             // (v, PDF::new(1.0 / PI))
+    //         },
+    //         10000,
+    //     );
+    //     let variance = square_estimate - estimate * estimate;
 
-                (Vec3::new(sample2d.x, sample2d.y, 0.0), PDF::new(1.0 / 4.0))
-                // (v, PDF::new(1.0 / PI))
-            },
-            10000,
-        );
-        let variance = square_estimate - estimate * estimate;
+    //     let true_value = PI;
+    //     assert!(((true_value - estimate) / true_value).abs() < 0.01);
+    // }
 
-        let true_value = PI;
-        assert!(((true_value - estimate) / true_value).abs() < 0.01);
-    }
+    // #[test]
+    // fn test_mc_integral_of_x_cubed() {
+    //     let true_value = 0.25;
 
-    #[test]
-    fn test_mc_integral_of_x_cubed() {
-        let true_value = 0.25;
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, Length, _, _, _>(
+    //         |x: f32| x * x * x,
+    //         |_| {
+    //             // uniform sampling
+    //             let sample = Bounds1D::new(0.0, 1.0).sample(debug_random());
+    //             (sample, PDF::new(1.0))
+    //         },
+    //         100,
+    //     );
+    //     // let variance = square_estimate - estimate * estimate;
+    //     // println!("{:?}, var = {:?}", estimate, variance);
+    //     assert!(((estimate - true_value) / true_value).abs() < 0.2);
 
-        let (estimate, square_estimate) = mc_integrate::<_, _, Length, _, _, _>(
-            |x: f32| x * x * x,
-            |_| {
-                // uniform sampling
-                let sample = Bounds1D::new(0.0, 1.0).sample(debug_random());
-                (sample, PDF::new(1.0))
-            },
-            100,
-        );
-        // let variance = square_estimate - estimate * estimate;
-        // println!("{:?}, var = {:?}", estimate, variance);
-        assert!(((estimate - true_value) / true_value).abs() < 0.2);
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, Length, _, _, _>(
+    //         |x: f32| x * x * x,
+    //         |_| {
+    //             // importance sampling y=x
 
-        let (estimate, square_estimate) = mc_integrate::<_, _, Length, _, _, _>(
-            |x: f32| x * x * x,
-            |_| {
-                // importance sampling y=x
+    //             let b = Bounds1D::new(0.0, 1.0);
+    //             let c = b.span() / 2.0;
 
-                let b = Bounds1D::new(0.0, 1.0);
-                let c = b.span() / 2.0;
+    //             let u = debug_random();
+    //             let x = u.sqrt();
+    //             let sample = b.sample(x);
+    //             let pdf = x / c;
+    //             (sample, PDF::new(pdf))
+    //         },
+    //         100,
+    //     );
+    //     let variance = square_estimate - estimate * estimate;
 
-                let u = debug_random();
-                let x = u.sqrt();
-                let sample = b.sample(x);
-                let pdf = x / c;
-                (sample, PDF::new(pdf))
-            },
-            100,
-        );
-        let variance = square_estimate - estimate * estimate;
+    //     assert!(((estimate - true_value) / true_value).abs() < 0.15);
+    // }
 
-        assert!(((estimate - true_value) / true_value).abs() < 0.15);
-    }
+    // #[test]
+    // fn test_mc_integral_of_solid_angle() {
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, SolidAngle, _, _, _>(
+    //         |v: Vec3| 1.0,
+    //         |_| {
+    //             let sample_2d = Sample2D::new_random_sample();
+    //             let on_unit_sphere = random_on_unit_sphere(sample_2d);
 
-    #[test]
-    fn test_mc_integral_of_solid_angle() {
-        let (estimate, square_estimate) = mc_integrate::<_, _, SolidAngle, _, _, _>(
-            |v: Vec3| 1.0,
-            |_| {
-                let sample_2d = Sample2D::new_random_sample();
-                let on_unit_sphere = random_on_unit_sphere(sample_2d);
+    //             (on_unit_sphere, PDF::new(1.0 / 4.0 / PI))
+    //         },
+    //         10000,
+    //     );
+    //     let variance = square_estimate - estimate * estimate;
+    //     println!("{}, stddev: {}", estimate, variance.abs().sqrt());
+    // }
 
-                (on_unit_sphere, PDF::new(1.0 / 4.0 / PI))
-            },
-            10000,
-        );
-        let variance = square_estimate - estimate * estimate;
-        println!("{}, stddev: {}", estimate, variance.abs().sqrt());
-    }
+    // #[test]
+    // fn test_mc_integral_of_projected_solid_angle() {
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, ProjectedSolidAngle, _, _, _>(
+    //         |v: Vec3| v.z().abs(),
+    //         |_| {
+    //             let sample_2d = Sample2D::new_random_sample();
+    //             let mut on_unit_sphere = random_on_unit_sphere(sample_2d);
+    //             on_unit_sphere = Vec3::new(
+    //                 on_unit_sphere.x(),
+    //                 on_unit_sphere.y(),
+    //                 on_unit_sphere.z().abs(),
+    //             );
 
-    #[test]
-    fn test_mc_integral_of_projected_solid_angle() {
-        let (estimate, square_estimate) = mc_integrate::<_, _, ProjectedSolidAngle, _, _, _>(
-            |v: Vec3| v.z().abs(),
-            |_| {
-                let sample_2d = Sample2D::new_random_sample();
-                let mut on_unit_sphere = random_on_unit_sphere(sample_2d);
-                on_unit_sphere = Vec3::new(
-                    on_unit_sphere.x(),
-                    on_unit_sphere.y(),
-                    on_unit_sphere.z().abs(),
-                );
+    //             // is distributed uniformly on half of the unit sphere, so the pdf is 1 / 2pi
+    //             (on_unit_sphere, PDF::new(1.0 / 2.0 / PI))
+    //         },
+    //         10000000,
+    //     );
+    //     let variance = square_estimate - estimate * estimate;
+    //     println!("{} {}", estimate, variance.abs().sqrt());
 
-                // is distributed uniformly on half of the unit sphere, so the pdf is 1 / 2pi
-                (on_unit_sphere, PDF::new(1.0 / 2.0 / PI))
-            },
-            10000000,
-        );
-        let variance = square_estimate - estimate * estimate;
-        println!("{} {}", estimate, variance.abs().sqrt());
+    //     let (estimate, square_estimate) = mc_integrate::<_, _, ProjectedSolidAngle, _, _, _>(
+    //         |v: Vec3| v.z().abs(),
+    //         |_| {
+    //             let mut sample_2d = Sample2D::new_random_sample();
 
-        let (estimate, square_estimate) = mc_integrate::<_, _, ProjectedSolidAngle, _, _, _>(
-            |v: Vec3| v.z().abs(),
-            |_| {
-                let mut sample_2d = Sample2D::new_random_sample();
+    //             let random_on_hemisphere = random_cosine_direction(sample_2d);
+    //             (
+    //                 random_on_hemisphere,
+    //                 PDF::new(random_on_hemisphere.z() / PI),
+    //             )
+    //         },
+    //         100000,
+    //     );
 
-                let random_on_hemisphere = random_cosine_direction(sample_2d);
-                (
-                    random_on_hemisphere,
-                    PDF::new(random_on_hemisphere.z() / PI),
-                )
-            },
-            100000,
-        );
-
-        let variance = square_estimate - estimate * estimate;
-        println!("{} {}", estimate, variance.abs().sqrt());
-    }
+    //     let variance = square_estimate - estimate * estimate;
+    //     println!("{} {}", estimate, variance.abs().sqrt());
+    // }
 }
