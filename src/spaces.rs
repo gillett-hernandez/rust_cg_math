@@ -60,9 +60,10 @@ impl SpaceParameterization for Circle {
 pub type DiskSpace = ProductSet<Circle, UnitInterval>;
 
 /// only the surface - space of directions, solid angle, and surface area
-pub struct Sphere;
+/// theta phi parameterization, aka spherical coordinates
+pub struct SphericalCoordinates;
 
-impl SpaceParameterization for Sphere {
+impl SpaceParameterization for SphericalCoordinates {
     type SimpleSet = Bounds2D;
 
     type Element = (f32, f32);
@@ -74,4 +75,13 @@ impl SpaceParameterization for Sphere {
 }
 
 /// includes interior
-pub type Ball = ProductSet<Sphere, UnitInterval>;
+pub type SphericalCoordinatesBall = ProductSet<SphericalCoordinates, UnitInterval>;
+
+pub struct DirectionalSector;
+
+impl SpaceParameterization for DirectionalSector {
+    type SimpleSet = (Vec3, f32);
+    // space is slightly redundant, as when the set span is PI, every direction represents the same subset
+    type Element = Vec3;
+    const SPACE: Self::SimpleSet = (Vec3::Z, PI);
+}

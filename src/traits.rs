@@ -1,8 +1,10 @@
 use crate::spaces::{
-    Circle, DiskSpace, Element, ProductSet, R1, SimpleSet, SpaceParameterization, Sphere,
+    Circle, DirectionalSector, DiskSpace, Element, ProductSet, R1, SimpleSet,
+    SpaceParameterization, SphericalCoordinates,
 };
 
 use crate::prelude::*;
+use std::f32::consts::FRAC_PI_2;
 pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
     // arch::aarch64::float32x4x3_t,
@@ -47,6 +49,13 @@ impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
     }
 }
 
+/* pub trait PDF: Measure {
+    fn verify() -> bool {
+        let space = <<Self as Measure>::Space as SpaceParameterization>::SPACE;
+        (Self::measure(space) - 1.0) < 0.0001
+    }
+} */
+
 /// basic lebesgue length measure
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Length;
@@ -86,6 +95,9 @@ impl Measure for DiskAreaMeasure {
     fn measure(set: SimpleSet<Self>) -> f32 {
         // set.0 is angle bounds and set.1 is radius bounds
 
+        // this formula (and the jacobian in differential_measure) can be
+        // derived from the parameterization and change of variables / jacobian, then integration over the set bounds
+
         set.0.span() % Self::Space::SPACE.0.span() / 2.0
             * (set.1.upper.powi(2) - set.1.lower.powi(2))
     }
@@ -101,18 +113,34 @@ impl Measure for DiskAreaMeasure {
 ///      = sin(theta) d[theta] d[phi]
 ///      = d[cos theta] d[phi]
 // #[derive(Copy, Clone, Debug, Default)]
-pub struct SolidAngle;
-impl Measure for SolidAngle {
-    type Space = Sphere;
+pub struct SolidAngle<P: SpaceParameterization>(PhantomData<P>);
+impl Measure for SolidAngle<SphericalCoordinates> {
+    type Space = SphericalCoordinates;
 
     fn measure(set: SimpleSet<Self>) -> f32 {
         let azimuthal = set.x.span();
-        let zenithal = set.y.span();
-        todo!()
+        let Bounds1D {
+            lower: phi0,
+            upper: phi1,
+        } = set.y;
+        // measure is the integral of the differential measure over the integration bounds
+        // int_theta0^theta1 { int_phi0^phi1 { sin(phi) } }
+        // == (theta1-theta0) * (-cos(phi1) + cos(phi0))
+        (phi0.cos() - phi1.cos()) * azimuthal
     }
 
     fn differential_measure(element: Element<Self>) -> f32 {
         element.1.sin()
+    }
+}
+
+impl Measure for SolidAngle<DirectionalSector> {
+    type Space = DirectionalSector;
+    fn measure(set: SimpleSet<Self>) -> f32 {
+        TAU * (1.0 - set.1.cos())
+    }
+    fn differential_measure(element: Element<Self>) -> f32 {
+        1.0
     }
 }
 
@@ -126,14 +154,29 @@ impl Measure for SolidAngle {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {
-    type Space = Sphere;
+    type Space = SphericalCoordinates;
     fn measure(set: SimpleSet<Self>) -> f32 {
         let azimuthal = set.x.span();
-        let zenithal = set.y.span();
-        todo!()
+        let phi_bounds = set.y;
+        // measure is azimuthal * int_phi0^phi1 { |cos(phi)| sin(phi) }
+        // split the integrand across the phi=pi/2 boundary
+        // in either case the integral of cos(phi)*sin(phi) needs to be known
+        // half/double angle formula?
+        // sin(2x)/2 = sin(x)*cos(x)
+        // 0.25 * (cos(2*lower) - cos(2 * higher))
+        // btw, cos of (2 * PI/2) == cos(pi) == -1
+        // meaning the integral is either 0.25 * (-1 - cos(2phi)) if lower == pi/2, thus upper is larger than pi/2
+        // or 0.25 * (cos(2phi) + 1) if upper == pi/2, thus lower is less than pi/2
+        if phi_bounds.contains(&FRAC_PI_2) {
+            // handle boundary crossing case
+            let (phi0, phi1) = (phi_bounds.lower, phi_bounds.upper);
+            0.25 * (1.0 + (2.0 * phi1).cos() + 1.0 + (2.0 * phi0).cos())
+        } else {
+            0.25 * ((phi_bounds.lower * 2.0).cos() - (phi_bounds.upper * 2.0).cos())
+        }
     }
     fn differential_measure(element: Element<Self>) -> f32 {
-        element.1.sin()
+        element.1.cos().abs() * element.1.sin()
     }
 }
 
@@ -167,13 +210,7 @@ impl Default for PathThroughput {
     }
 }
 
-impl CombineMeasure<Throughput> for PathThroughput {
-    fn combine_with(self, other: Throughput) -> Self {
-        Self {
-            rank: self.rank + 1,
-        }
-    }
-}*/
+*/
 
 // misc traits
 pub trait Abs {

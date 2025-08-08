@@ -1,6 +1,7 @@
 use std::{
     // marker::PhantomData,
-    ops::{ Deref, DerefMut, },
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
 };
 
 use crate::prelude::*;
@@ -10,18 +11,21 @@ pub struct PDF<T: Field, M: Measure> {
     v: T,
     // TODO: determine if this should be PhantomData<*const M> or instead just M
     // just M would allow for M: Measure to be some arbitrary type
-    measure: M,
+    measure: PhantomData<*const M>,
 }
 
 impl<T: Field, M: Measure> PDF<T, M> {
     pub fn new(v: T) -> Self {
         Self {
             v,
-            measure: M::default(),
+            measure: PhantomData,
         }
     }
     pub fn new_with_measure(v: T, m: M) -> Self {
-        Self { v, measure: m }
+        Self {
+            v,
+            measure: PhantomData,
+        }
     }
 }
 
@@ -48,7 +52,7 @@ impl<T: Field, M: Measure> From<T> for PDF<T, M> {
     }
 }
 
-impl<T: Field, M: Measure> Add for PDF<T, M> {
+/*impl<T: Field, M: Measure> Add for PDF<T, M> {
     type Output = Self;
     // must be under the same field and measure
     fn add(self, rhs: Self) -> Self::Output {
@@ -90,7 +94,7 @@ where
     fn div(self, rhs: S) -> Self::Output {
         PDF::new(self.v / T::from_scalar(rhs))
     }
-}
+} */
 
 // special conversions
 impl<T: Field> PDF<T, SolidAngle> {
