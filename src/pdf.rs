@@ -97,88 +97,88 @@ where
 } */
 
 // special conversions
-impl<T: Field> PDF<T, SolidAngle> {
-    pub fn convert_to_projected_solid_angle<S: Scalar>(
-        &self,
-        cos_theta: S,
-    ) -> PDF<T, ProjectedSolidAngle>
-    where
-        T: FromScalar<S>,
-    {
-        PDF::new(self.v * T::from_scalar(cos_theta).abs())
-    }
-}
+// impl<T: Field> PDF<T, SolidAngle> {
+//     pub fn convert_to_projected_solid_angle<S: Scalar>(
+//         &self,
+//         cos_theta: S,
+//     ) -> PDF<T, ProjectedSolidAngle>
+//     where
+//         T: FromScalar<S>,
+//     {
+//         PDF::new(self.v * T::from_scalar(cos_theta).abs())
+//     }
+// }
 
-impl<T: Field> PDF<T, Area> {
-    pub fn convert_to_solid_angle<S: Scalar>(
-        &self,
-        cos_theta: S,
-        distance_squared: S,
-    ) -> PDF<T, SolidAngle>
-    where
-        T: FromScalar<S>,
-    {
-        PDF::new(self.v * T::from_scalar(cos_theta).abs() / T::from_scalar(distance_squared))
-    }
-}
+// impl<T: Field> PDF<T, Area> {
+//     pub fn convert_to_solid_angle<S: Scalar>(
+//         &self,
+//         cos_theta: S,
+//         distance_squared: S,
+//     ) -> PDF<T, SolidAngle>
+//     where
+//         T: FromScalar<S>,
+//     {
+//         PDF::new(self.v * T::from_scalar(cos_theta).abs() / T::from_scalar(distance_squared))
+//     }
+// }
 
-impl<T: Field> PDF<T, Area> {
-    pub fn convert_to_projected_solid_angle<S: Scalar>(
-        &self,
-        cos_i: S,
-        cos_o: S,
-        distance_squared: S,
-    ) -> PDF<T, ProjectedSolidAngle>
-    where
-        T: FromScalar<S>,
-    {
-        // this is valid, but probably somewhat slower.
-        // self.convert_to(cos_i, distance_squared).convert_to(cos_o)
-        PDF::new(self.v * T::from_scalar(cos_o * cos_i).abs() / T::from_scalar(distance_squared))
-    }
-}
+// impl<T: Field> PDF<T, Area> {
+//     pub fn convert_to_projected_solid_angle<S: Scalar>(
+//         &self,
+//         cos_i: S,
+//         cos_o: S,
+//         distance_squared: S,
+//     ) -> PDF<T, ProjectedSolidAngle>
+//     where
+//         T: FromScalar<S>,
+//     {
+//         // this is valid, but probably somewhat slower.
+//         // self.convert_to(cos_i, distance_squared).convert_to(cos_o)
+//         PDF::new(self.v * T::from_scalar(cos_o * cos_i).abs() / T::from_scalar(distance_squared))
+//     }
+// }
 
-// impl<T> PDF<T, ProjectedSolidAngle> where T: Field {}
-impl<T: Field> PDF<T, ProjectedSolidAngle> {
-    fn convert_to_throughput(self, area_pdf: PDF<T, Area>) -> PDF<T, Throughput> {
-        (*area_pdf * *self).into()
-    }
-}
+// // impl<T> PDF<T, ProjectedSolidAngle> where T: Field {}
+// impl<T: Field> PDF<T, ProjectedSolidAngle> {
+//     fn convert_to_throughput(self, area_pdf: PDF<T, Area>) -> PDF<T, Throughput> {
+//         (*area_pdf * *self).into()
+//     }
+// }
 
 #[cfg(test)]
 mod test {
     use super::*;
     // TODO: come up with some tests that demonstrate monte carlo integration with change of variables using pdf conversions
-    #[test]
-    fn test_area_pdf() {
-        let area_pdf_distant_object: PDF<f32, Area> = PDF::new(1.0);
-        let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 =
-            area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
-        let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
+    // #[test]
+    // fn test_area_pdf() {
+    //     let area_pdf_distant_object: PDF<f32, Area> = PDF::new(1.0);
+    //     let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
+    //     let projected_solid_angle0 =
+    //         area_pdf_distant_object.convert_to_projected_solid_angle(0.5, 0.5, 2.0);
+    //     let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5);
 
-        println!("{:?}", area_pdf_distant_object);
-        println!("{:?}", solid_angle);
-        println!("{:?}", projected_solid_angle0);
-        println!("{:?}", projected_solid_angle1);
-        assert!(*projected_solid_angle0 == *projected_solid_angle1);
+    //     println!("{:?}", area_pdf_distant_object);
+    //     println!("{:?}", solid_angle);
+    //     println!("{:?}", projected_solid_angle0);
+    //     println!("{:?}", projected_solid_angle1);
+    //     assert!(*projected_solid_angle0 == *projected_solid_angle1);
 
-        let area_pdf_distant_object: PDF<f32x4, Area> =
-            PDF::new(f32x4::from_array([0.1, 0.4, 0.2, 10.0]));
-        let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
-        let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(
-            0.5.into(),
-            0.5.into(),
-            2.0.into(),
-        );
-        let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5.into());
+    //     let area_pdf_distant_object: PDF<f32x4, Area> =
+    //         PDF::new(f32x4::from_array([0.1, 0.4, 0.2, 10.0]));
+    //     let solid_angle = area_pdf_distant_object.convert_to_solid_angle(0.5, 2.0);
+    //     let projected_solid_angle0 = area_pdf_distant_object.convert_to_projected_solid_angle(
+    //         0.5.into(),
+    //         0.5.into(),
+    //         2.0.into(),
+    //     );
+    //     let projected_solid_angle1 = solid_angle.convert_to_projected_solid_angle(0.5.into());
 
-        println!("{:?}", area_pdf_distant_object);
-        println!("{:?}", solid_angle);
-        println!("{:?}", projected_solid_angle0);
-        println!("{:?}", projected_solid_angle1);
-        assert!(*projected_solid_angle0 == *projected_solid_angle1);
-    }
+    //     println!("{:?}", area_pdf_distant_object);
+    //     println!("{:?}", solid_angle);
+    //     println!("{:?}", projected_solid_angle0);
+    //     println!("{:?}", projected_solid_angle1);
+    //     assert!(*projected_solid_angle0 == *projected_solid_angle1);
+    // }
     #[test]
     fn test_solid_angle_pdf() {}
     #[test]

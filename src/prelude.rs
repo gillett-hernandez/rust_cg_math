@@ -1,4 +1,7 @@
-pub(crate) use std::simd::{cmp::SimdPartialOrd, f32x4, num::SimdFloat, StdFloat};
+pub(crate) use std::f32::INFINITY;
+pub(crate) use std::f32::consts::{FRAC_PI_2, PI, TAU};
+pub(crate) use std::ops::{Add, AddAssign, Div, Mul, MulAssign, Neg};
+pub(crate) use std::simd::{StdFloat, cmp::SimdPartialOrd, f32x4, num::SimdFloat};
 
 pub use crate::bounds::*;
 pub use crate::color::*;
@@ -20,6 +23,3 @@ pub use crate::curves::{
 pub use crate::tangent_frame::TangentFrame;
 pub use crate::transform::*;
 pub use crate::vec::{Axis, Vec3};
-
-pub(crate) use std::f32::consts::PI;
-pub(crate) use std::f32::INFINITY;

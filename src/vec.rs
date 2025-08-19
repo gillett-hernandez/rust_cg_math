@@ -5,7 +5,7 @@ use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
-use std::ops::{MulAssign, Sub};
+use std::ops::{Add, MulAssign, Sub};
 
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

@@ -1,18 +1,16 @@
+use typenum::{Add1, Unsigned};
+
 use crate::spaces::{
-    Circle, DirectionalSector, DiskSpace, Element, ProductSet, R1, SimpleSet,
-    SpaceParameterization, SphericalCoordinates,
+    Circle, DirectionalSector, DiskSpace, Element, ProductSet, R, SimpleSet, SpaceParameterization,
+    SphericalCoordinates,
 };
 
 use crate::prelude::*;
-use std::f32::consts::FRAC_PI_2;
-pub(crate) use std::ops::{Add, Div, Mul, Neg};
 use std::{
     // arch::aarch64::float32x4x3_t,
     cmp::Ordering,
     fmt::Debug,
     marker::PhantomData,
-    num::NonZero,
-    ops::{AddAssign, MulAssign},
     simd::f32x2,
 };
 
@@ -26,11 +24,11 @@ use std::{
 pub trait Measure {
     type Space: SpaceParameterization;
     /// measure a set
-    fn measure(set: SimpleSet<Self>) -> f32;
+    fn measure(set: SimpleSet<Self::Space>) -> f32;
     /// differential measure at a point. if the space/parameterization is uniform, then the differential measure will just be 1.
     /// if the space/parameterization is uniform and the measure is a pdf, then the differential measure will likely just be 1 / mu(Omega)
     /// where mu is the measure and Omega is the entire space over which the pdf is defined
-    fn differential_measure(element: Element<Self>) -> f32;
+    fn differential_measure(element: Element<Self::Space>) -> f32;
 }
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProductMeasure<A: Measure, B: Measure> {
@@ -41,10 +39,10 @@ pub struct ProductMeasure<A: Measure, B: Measure> {
 impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
     type Space = ProductSet<A::Space, B::Space>;
 
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         A::measure(set.0) * B::measure(set.1)
     }
-    fn differential_measure(element: Element<Self>) -> f32 {
+    fn differential_measure(element: Element<Self::Space>) -> f32 {
         A::differential_measure(element.0) * B::differential_measure(element.1)
     }
 }
@@ -60,11 +58,11 @@ impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Length;
 impl Measure for Length {
-    type Space = R1;
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    type Space = R;
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         set.span()
     }
-    fn differential_measure(_: Element<Self>) -> f32 {
+    fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
 }
@@ -79,10 +77,10 @@ pub struct Angle;
 
 impl Measure for Angle {
     type Space = Circle;
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         set.span() % Self::Space::SPACE.span()
     }
-    fn differential_measure(_: Element<Self>) -> f32 {
+    fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
 }
@@ -92,7 +90,7 @@ pub struct DiskAreaMeasure;
 impl Measure for DiskAreaMeasure {
     type Space = DiskSpace;
 
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         // set.0 is angle bounds and set.1 is radius bounds
 
         // this formula (and the jacobian in differential_measure) can be
@@ -102,7 +100,7 @@ impl Measure for DiskAreaMeasure {
             * (set.1.upper.powi(2) - set.1.lower.powi(2))
     }
 
-    fn differential_measure(element: Element<Self>) -> f32 {
+    fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1
     }
 }
@@ -117,7 +115,7 @@ pub struct SolidAngle<P: SpaceParameterization>(PhantomData<P>);
 impl Measure for SolidAngle<SphericalCoordinates> {
     type Space = SphericalCoordinates;
 
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         let azimuthal = set.x.span();
         let Bounds1D {
             lower: phi0,
@@ -129,17 +127,17 @@ impl Measure for SolidAngle<SphericalCoordinates> {
         (phi0.cos() - phi1.cos()) * azimuthal
     }
 
-    fn differential_measure(element: Element<Self>) -> f32 {
+    fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1.sin()
     }
 }
 
 impl Measure for SolidAngle<DirectionalSector> {
     type Space = DirectionalSector;
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         TAU * (1.0 - set.1.cos())
     }
-    fn differential_measure(element: Element<Self>) -> f32 {
+    fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
 }
@@ -155,7 +153,7 @@ impl Measure for SolidAngle<DirectionalSector> {
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {
     type Space = SphericalCoordinates;
-    fn measure(set: SimpleSet<Self>) -> f32 {
+    fn measure(set: SimpleSet<Self::Space>) -> f32 {
         let azimuthal = set.x.span();
         let phi_bounds = set.y;
         // measure is azimuthal * int_phi0^phi1 { |cos(phi)| sin(phi) }
@@ -170,12 +168,12 @@ impl Measure for ProjectedSolidAngle {
         if phi_bounds.contains(&FRAC_PI_2) {
             // handle boundary crossing case
             let (phi0, phi1) = (phi_bounds.lower, phi_bounds.upper);
-            0.25 * (1.0 + (2.0 * phi1).cos() + 1.0 + (2.0 * phi0).cos())
+            0.25 * azimuthal * (1.0 + (2.0 * phi1).cos() + 1.0 + (2.0 * phi0).cos())
         } else {
-            0.25 * ((phi_bounds.lower * 2.0).cos() - (phi_bounds.upper * 2.0).cos())
+            0.25 * azimuthal * ((phi_bounds.lower * 2.0).cos() - (phi_bounds.upper * 2.0).cos())
         }
     }
-    fn differential_measure(element: Element<Self>) -> f32 {
+    fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1.cos().abs() * element.1.sin()
     }
 }
@@ -186,31 +184,27 @@ impl Measure for ProjectedSolidAngle {
 ///      differential area x differential projected solid angle
 ///      or the differential projected area x differential solid angle
 ///      = |w . N| * differential area * differential solid angle
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Throughput {}
-//impl Measure for Throughput {}
+pub type Throughput = ProductMeasure<Area, ProjectedSolidAngle>;
 
 /// the path throughput measure is the product measure of multiple normal Throughput measures, determined by the rank
 #[derive(Debug, Copy, Clone)]
-pub struct PathThroughput {
-    pub rank: usize,
-}
+pub struct PathThroughput<N: Unsigned>(PhantomData<N>);
 
-impl Default for PathThroughput {
+impl<N: Unsigned> Default for PathThroughput<N> {
     fn default() -> Self {
-        Self { rank: 1 }
+        Self(PhantomData)
     }
 }
 
-/*impl Measure for PathThroughput {
-    fn combine(self, other: Self) -> Self {
-        Self {
-            rank: self.rank + other.rank,
-        }
+impl<N: Unsigned + Add> Mul<Throughput> for PathThroughput<N>
+where
+    <N as Add>::Output: typenum::Unsigned,
+{
+    type Output = PathThroughput<<N as Add>::Output>;
+    fn mul(self, _: Throughput) -> Self::Output {
+        Self::Output::default()
     }
 }
-
-*/
 
 // misc traits
 pub trait Abs {
@@ -460,11 +454,43 @@ impl SimdFloatPatch for f32x4 {
 
 #[cfg(test)]
 mod test {
-    use std::f32::consts::TAU;
-
     use num_traits::FromPrimitive;
 
     use super::*;
+
+    #[test]
+    fn length_measure() {
+        let m = Length::default();
+        // let s = <<Length as Measure>::Space as SpaceParameterization>::SimpleSet::default();
+    }
+
+    #[test]
+    fn area_measure() {
+        let m = Area::default();
+    }
+
+    #[test]
+    fn volume_measure() {
+        let m = Volume::default();
+    }
+
+    #[test]
+    fn diskarea_measure() {
+        let m = DiskAreaMeasure;
+    }
+
+    #[test]
+    fn solidangle_measure() {
+        // let m = SolidAngle::<DirectionalSector>::default();
+        let e = Vec3::new(1.0, 1.0, 1.0).normalized();
+        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(e);
+        println!("d_mu is {}", d_mu);
+
+        let uv = direction_to_uv(e);
+        let d_mu =
+            SolidAngle::<SphericalCoordinates>::differential_measure((uv.0 * TAU, uv.1 * PI));
+        println!("d_mu is {}", d_mu);
+    }
 
     // type DiskPDF = PDF<f32, DiskMeasure>;
     // type Sampled1D = (Sample1D, PDF<f32, Length>);
