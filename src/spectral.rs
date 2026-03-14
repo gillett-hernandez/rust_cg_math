@@ -1,3 +1,5 @@
+use std::simd::Select;
+
 use crate::prelude::*;
 
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);

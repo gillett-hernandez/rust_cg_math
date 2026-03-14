@@ -421,6 +421,8 @@ impl SpectralPowerDistributionFunction<f32x4> for Curve {
                 bounds,
                 mode,
             } => {
+                use std::simd::Select;
+
                 let splatted_step_size = f32x4::splat(bounds.span() / (signal.len() as f32));
                 let index =
                     ((lambda - f32x4::splat(bounds.lower)) / splatted_step_size).cast::<usize>();

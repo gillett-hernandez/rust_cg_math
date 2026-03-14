@@ -21,6 +21,8 @@ pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
 
 #[cfg(feature="simdfloat_patch")]
 pub fn gaussian_f32x4(x: f32x4, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32x4 {
+    use std::simd::Select;
+
     let sqrt = (x - f32x4::splat(mu))
         / x.simd_lt(f32x4::splat(mu))
             .select(f32x4::splat(sigma1), f32x4::splat(sigma2));
