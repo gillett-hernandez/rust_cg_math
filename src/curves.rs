@@ -157,7 +157,7 @@ impl Curve {
                 } else if x >= bounds.upper {
                     return *signal.last().unwrap();
                 }
-                let step_size = bounds.span() / (signal.len() as f32);
+                let step_size = bounds.span() / ((signal.len() - 1) as f32);
                 let index = ((x - bounds.lower) / step_size) as usize;
                 let left = signal[index];
                 let right = if index + 1 < signal.len() {
@@ -286,7 +286,7 @@ impl Curve {
                 // converting linear curve to CDF, easy enough since you have the raw signal
                 let mut cdf_signal = signal.clone();
                 let mut s = 0.0;
-                let step_size = bounds.span() / (signal.len() as f32);
+                let step_size = bounds.span() / ((signal.len() - 1) as f32);
                 for (i, v) in signal.iter().enumerate() {
                     cdf_signal[i] = s;
                     s += v * step_size;
@@ -371,8 +371,122 @@ impl Curve {
                 }
                 sum * factor
             }
+            Curve::Linear {
+                signal,
+                bounds: signal_bounds,
+                mode: InterpolationMode::Linear,
+            } => {
+                // analytical integration of piecewise-linear curve
+                if signal.is_empty() {
+                    return 0.0;
+                }
+
+                let clamp = |v: f32| -> f32 {
+                    if clamped {
+                        v.clamp(0.0, ONE_SUB_EPSILON)
+                    } else {
+                        v
+                    }
+                };
+
+                let ib_lo = integration_bounds.lower;
+                let ib_hi = integration_bounds.upper;
+                let sb_lo = signal_bounds.lower;
+                let sb_hi = signal_bounds.upper;
+                let step = signal_bounds.span() / signal.len() as f32;
+                let mut sum = 0.0;
+
+                // constant extension below signal bounds (value = first sample)
+                if ib_lo < sb_lo {
+                    let end = ib_hi.min(sb_lo);
+                    sum += clamp(signal[0]) * (end - ib_lo);
+                }
+
+                // constant extension above signal bounds (value = last sample)
+                if ib_hi > sb_hi {
+                    let start = ib_lo.max(sb_hi);
+                    sum += clamp(*signal.last().unwrap()) * (ib_hi - start);
+                }
+
+                // piecewise-linear region within signal bounds
+                let overlap_lo = ib_lo.max(sb_lo);
+                let overlap_hi = ib_hi.min(sb_hi);
+
+                if overlap_lo < overlap_hi && signal.len() >= 2 {
+                    let start_idx = ((overlap_lo - sb_lo) / step) as usize;
+                    for i in start_idx..signal.len() - 1 {
+                        let seg_lo = sb_lo + i as f32 * step;
+                        let seg_hi = seg_lo + step;
+
+                        if seg_lo >= overlap_hi {
+                            break;
+                        }
+
+                        let x_lo = seg_lo.max(overlap_lo);
+                        let x_hi = seg_hi.min(overlap_hi);
+                        if x_lo >= x_hi {
+                            continue;
+                        }
+
+                        // unclamped interpolated values at the clipped segment endpoints
+                        let t_lo = (x_lo - seg_lo) / step;
+                        let t_hi = (x_hi - seg_lo) / step;
+                        let y_lo_raw = (1.0 - t_lo) * signal[i] + t_lo * signal[i + 1];
+                        let y_hi_raw = (1.0 - t_hi) * signal[i] + t_hi * signal[i + 1];
+
+                        if !clamped {
+                            // trapezoid rule is exact for linear segments
+                            sum += (x_hi - x_lo) * (y_lo_raw + y_hi_raw) * 0.5;
+                        } else {
+                            // When clamped, the function is piecewise: linear
+                            // where within [0, ONE_SUB_EPSILON], constant at the
+                            // boundary where outside. Split at crossing points so
+                            // each sub-segment's trapezoid is exact.
+                            let width = x_hi - x_lo;
+                            let dy = y_hi_raw - y_lo_raw;
+
+                            // collect split points as fractions t in [0, width]
+                            let mut ts = [0.0f32; 4];
+                            let mut n = 1usize;
+                            ts[0] = 0.0;
+
+                            if dy.abs() > f32::EPSILON {
+                                // t where y(t) = 0: y_lo_raw + dy*t/width = 0
+                                let t_zero = -y_lo_raw * width / dy;
+                                if t_zero > 0.0 && t_zero < width {
+                                    ts[n] = t_zero;
+                                    n += 1;
+                                }
+                                // t where y(t) = ONE_SUB_EPSILON
+                                let t_one = (ONE_SUB_EPSILON - y_lo_raw) * width / dy;
+                                if t_one > 0.0 && t_one < width {
+                                    ts[n] = t_one;
+                                    n += 1;
+                                }
+                            }
+
+                            ts[n] = width;
+                            n += 1;
+                            ts[..n].sort_by(|a, b| a.total_cmp(b));
+
+                            for j in 0..n - 1 {
+                                let ta = ts[j];
+                                let tb = ts[j + 1];
+                                let ya = (y_lo_raw + dy * ta / width).clamp(0.0, ONE_SUB_EPSILON);
+                                let yb = (y_lo_raw + dy * tb / width).clamp(0.0, ONE_SUB_EPSILON);
+                                sum += (tb - ta) * (ya + yb) * 0.5;
+                            }
+                        }
+                    }
+                } else if overlap_lo < overlap_hi {
+                    // single-sample signal: constant within bounds
+                    sum += clamp(signal[0]) * (overlap_hi - overlap_lo);
+                }
+
+                sum
+            }
             _ => {
-                // trapezoidal rule
+                // simpson's rule
                 let step_size = integration_bounds.span() / samples as f32;
                 let mut sum = 0.0;
                 let mut last_f = if clamped {
@@ -880,6 +994,38 @@ mod test {
     }
 
     #[test]
+    fn test_clamped_integral_with_crossing() {
+        // Signal [0.0, 3.0] over bounds [0, 1]: step = 0.5, one segment [0, 0.5] with y = 6x.
+        // The clamp boundary ONE_SUB_EPSILON ≈ 1.0 is crossed at x_c ≈ 1/6 ≈ 0.1667 (NOT the midpoint 0.25).
+        // Integrate over just the segment [0, 0.5] with clamped=true.
+        //
+        // Exact clamped integral:
+        //   [0, x_c]: ∫ 6x dx = 3*x_c²
+        //   [x_c, 0.5]: ONE_SUB_EPSILON * (0.5 - x_c)
+        let one_sub_eps = 1.0 - f32::EPSILON;
+        let x_c = one_sub_eps / 6.0; // crossing point, ≈ 0.1667
+        let expected = 3.0 * x_c * x_c + one_sub_eps * (0.5 - x_c);
+
+        let curve = Curve::Linear {
+            signal: vec![0.0, 3.0],
+            bounds: Bounds1D::new(0.0, 1.0),
+            mode: InterpolationMode::Linear,
+        };
+        let integral = curve.evaluate_integral(Bounds1D::new(0.0, 0.5), 100, true);
+
+        // A naive clamped trapezoid would give 0.5 * (0 + ONE_SUB_EPSILON) / 2 ≈ 0.25,
+        // but the correct answer is ≈ 0.4167
+        let naive_wrong = 0.5 * (0.0 + one_sub_eps) / 2.0;
+        assert!(
+            (integral - expected).abs() < 1e-5,
+            "integral={}, expected={}, naive_wrong={}",
+            integral,
+            expected,
+            naive_wrong,
+        );
+    }
+
+    #[test]
     fn test_y_bar_spd() {
         let spd = Curve::y_bar();
         assert!(spd.evaluate(550.0) == 0.99955124);
@@ -975,7 +1121,46 @@ mod test {
     }
     #[test]
     fn test_curve_machine() {
-        todo!()
+        // Machine: seed=1.0, then Mul by Const(2.0), then Add Const(3.0)
+        // f(x) = 1.0 * 2.0 + 3.0 = 5.0 for all x
+        let machine = Curve::Machine {
+            seed: 1.0,
+            list: vec![(Op::Mul, Curve::Const(2.0)), (Op::Add, Curve::Const(3.0))],
+        };
+        assert_eq!(machine.evaluate(0.0), 5.0);
+        assert_eq!(machine.evaluate(500.0), 5.0);
+
+        // Machine with a non-const inner curve:
+        // seed=1.0, Add a nonlinear function, then Mul by Const(0.5)
+        // f(x) = (1 + ramp(x)) * 0.5
+        let inner = Curve::Linear {
+            signal: vec![0.0, 2.0, 6.0, 4.0, 6.0],
+            bounds: Bounds1D::new(0.0, 100.0),
+            mode: InterpolationMode::Cubic,
+        };
+
+        assert_eq!(inner.evaluate(0.0), 0.0);
+        assert_eq!(inner.evaluate(100.0), 6.0);
+        assert_eq!(inner.evaluate(25.0), 2.0);
+        assert_eq!(inner.evaluate(50.0), 6.0);
+        assert_eq!(inner.evaluate(75.0), 4.0);
+
+        let integral = inner.evaluate_integral(Bounds1D::new(0.0, 100.0), 1000, false);
+        println!("integral is {}", integral);
+        assert_approx_eq(integral, 375.0, 0.0001);
+
+        let machine = Curve::Machine {
+            seed: 1.0,
+            list: vec![(Op::Add, inner), (Op::Mul, Curve::Const(0.5))],
+        };
+        // at x=0 the ramp evaluates to 0.0, so f(0) = 0
+        assert_eq!(machine.evaluate(0.0), 0.5);
+        // spot-check a midpoint
+        let mid_val = machine.evaluate(50.0);
+        assert!(mid_val > 0.0, "expected positive at x=50, got {}", mid_val);
+
+        let integral = machine.evaluate_integral(Bounds1D::new(0.0, 100.0), 1000, false);
+        assert_approx_eq(integral, 237.5, 0.0001);
     }
 
     #[test]
