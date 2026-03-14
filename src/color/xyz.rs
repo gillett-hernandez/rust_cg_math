@@ -78,3 +78,87 @@ impl From<XYZColor> for f32x4 {
         v.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_color() -> impl Strategy<Value = XYZColor> {
+        (0.0f32..10.0, 0.0f32..10.0, 0.0f32..10.0)
+            .prop_map(|(x, y, z)| XYZColor::new(x, y, z))
+    }
+
+    #[test]
+    fn test_black_is_zero() {
+        let b = XYZColor::BLACK;
+        assert_eq!(b.x(), 0.0);
+        assert_eq!(b.y(), 0.0);
+        assert_eq!(b.z(), 0.0);
+    }
+
+    #[test]
+    fn test_black_add_identity() {
+        let c = XYZColor::new(1.0, 2.0, 3.0);
+        let result = c + XYZColor::BLACK;
+        assert_eq!(result.x(), c.x());
+        assert_eq!(result.y(), c.y());
+        assert_eq!(result.z(), c.z());
+    }
+
+    proptest! {
+        #[test]
+        fn component_access(x in 0.0f32..10.0, y in 0.0f32..10.0, z in 0.0f32..10.0) {
+            let c = XYZColor::new(x, y, z);
+            prop_assert_eq!(c.x(), x);
+            prop_assert_eq!(c.y(), y);
+            prop_assert_eq!(c.z(), z);
+        }
+
+        #[test]
+        fn addition_commutative(a in arb_color(), b in arb_color()) {
+            let ab = a + b;
+            let ba = b + a;
+            prop_assert!((ab.x() - ba.x()).abs() < 1e-6);
+            prop_assert!((ab.y() - ba.y()).abs() < 1e-6);
+            prop_assert!((ab.z() - ba.z()).abs() < 1e-6);
+        }
+
+        #[test]
+        fn scalar_mul_div_roundtrip(c in arb_color(), s in 0.1f32..100.0) {
+            let result = (c * s) / s;
+            prop_assert!((result.x() - c.x()).abs() < 1e-3, "x: {} vs {}", result.x(), c.x());
+            prop_assert!((result.y() - c.y()).abs() < 1e-3, "y: {} vs {}", result.y(), c.y());
+            prop_assert!((result.z() - c.z()).abs() < 1e-3, "z: {} vs {}", result.z(), c.z());
+        }
+
+        #[test]
+        fn scalar_mul_commutativity(c in arb_color(), s in 0.0f32..10.0) {
+            let a = c * s;
+            let b = s * c;
+            prop_assert_eq!(a.x(), b.x());
+            prop_assert_eq!(a.y(), b.y());
+            prop_assert_eq!(a.z(), b.z());
+        }
+
+        #[test]
+        fn add_assign_same_as_add(a in arb_color(), b in arb_color()) {
+            let sum = a + b;
+            let mut assigned = a;
+            assigned += b;
+            prop_assert_eq!(sum.x(), assigned.x());
+            prop_assert_eq!(sum.y(), assigned.y());
+            prop_assert_eq!(sum.z(), assigned.z());
+        }
+
+        #[test]
+        fn div_assign_same_as_div(c in arb_color(), s in 0.1f32..100.0) {
+            let divided = c / s;
+            let mut assigned = c;
+            assigned /= s;
+            prop_assert!((divided.x() - assigned.x()).abs() < 1e-6);
+            prop_assert!((divided.y() - assigned.y()).abs() < 1e-6);
+            prop_assert!((divided.z() - assigned.z()).abs() < 1e-6);
+        }
+    }
+}

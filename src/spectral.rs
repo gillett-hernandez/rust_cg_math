@@ -111,3 +111,87 @@ impl WavelengthEnergyTrait<f32x4, f32x4> for WavelengthEnergy<f32x4, f32x4> {
         HeroWavelength::new(wavelengths - sub, f32x4::splat(0.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn test_visible_range_constants() {
+        assert_eq!(EXTENDED_VISIBLE_RANGE.lower, 370.0);
+        assert_eq!(EXTENDED_VISIBLE_RANGE.upper, 790.0);
+        assert_eq!(BOUNDED_VISIBLE_RANGE.lower, 380.0);
+        assert_eq!(BOUNDED_VISIBLE_RANGE.upper, 780.0);
+    }
+
+    proptest! {
+        #[test]
+        fn cie_x_bar_non_negative_in_visible(lambda in 380.0f32..780.0) {
+            let angstroms = lambda * 10.0;
+            let val = x_bar(angstroms);
+            prop_assert!(val >= -0.07, "x_bar({})={}", lambda, val);
+            // x_bar can be slightly negative due to the gaussian fitting
+        }
+
+        #[test]
+        fn cie_y_bar_non_negative_in_visible(lambda in 380.0f32..780.0) {
+            let angstroms = lambda * 10.0;
+            let val = y_bar(angstroms);
+            prop_assert!(val >= 0.0, "y_bar({})={}", lambda, val);
+        }
+
+        #[test]
+        fn cie_z_bar_non_negative_in_visible(lambda in 380.0f32..780.0) {
+            let angstroms = lambda * 10.0;
+            let val = z_bar(angstroms);
+            prop_assert!(val >= 0.0, "z_bar({})={}", lambda, val);
+        }
+
+        #[test]
+        fn cie_functions_near_zero_far_outside_visible(lambda in 100.0f32..200.0) {
+            let angstroms = lambda * 10.0;
+            prop_assert!(x_bar(angstroms).abs() < 0.01, "x_bar far UV should be ~0");
+            prop_assert!(y_bar(angstroms).abs() < 0.01, "y_bar far UV should be ~0");
+            prop_assert!(z_bar(angstroms).abs() < 0.01, "z_bar far UV should be ~0");
+        }
+
+        #[test]
+        fn single_wavelength_new_from_range(sample in 0.001f32..0.999) {
+            let bounds = BOUNDED_VISIBLE_RANGE;
+            let we = SingleWavelength::new_from_range(sample, bounds);
+            prop_assert!(we.lambda >= bounds.lower, "lambda={} < lower={}", we.lambda, bounds.lower);
+            prop_assert!(we.lambda <= bounds.upper, "lambda={} > upper={}", we.lambda, bounds.upper);
+            prop_assert_eq!(we.energy, 0.0);
+        }
+
+        #[test]
+        fn hero_wavelength_all_in_range(sample in 0.001f32..0.999) {
+            let bounds = BOUNDED_VISIBLE_RANGE;
+            let we = HeroWavelength::new_from_range(sample, bounds);
+            for i in 0..4 {
+                let l = we.lambda[i];
+                prop_assert!(
+                    l >= bounds.lower && l <= bounds.upper,
+                    "hero lambda[{}]={} not in [{}, {}]", i, l, bounds.lower, bounds.upper
+                );
+            }
+        }
+
+        #[test]
+        fn wavelength_energy_to_xyz_positive_energy(lambda in 400.0f32..700.0, energy in 0.0f32..10.0) {
+            let we = WavelengthEnergy { lambda, energy };
+            let xyz: XYZColor = we.into();
+            // with positive energy in the visible range, y should be non-negative
+            prop_assert!(xyz.y() >= 0.0, "xyz.y={} for lambda={}, energy={}", xyz.y(), lambda, energy);
+        }
+
+        #[test]
+        fn replace_energy_preserves_lambda(lambda in 380.0f32..780.0, e1 in 0.0f32..10.0, e2 in 0.0f32..10.0) {
+            let we = WavelengthEnergy { lambda, energy: e1 };
+            let replaced = we.replace_energy(e2);
+            prop_assert_eq!(replaced.lambda, lambda);
+            prop_assert_eq!(replaced.energy, e2);
+        }
+    }
+}

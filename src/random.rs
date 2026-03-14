@@ -68,3 +68,73 @@ pub fn random_to_sphere(r: Sample2D, radius: f32, distance_squared: f32) -> Vec3
     y *= sqrt_1_z2;
     return Vec3::new(x, y, z);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_sample2d() -> impl Strategy<Value = Sample2D> {
+        (0.0f32..0.9999, 0.0f32..0.9999).prop_map(|(x, y)| Sample2D::new(x, y))
+    }
+
+    fn arb_sample3d() -> impl Strategy<Value = Sample3D> {
+        (0.0f32..0.9999, 0.0f32..0.9999, 0.0f32..0.9999)
+            .prop_map(|(x, y, z)| Sample3D::new(x, y, z))
+    }
+
+    proptest! {
+        #[test]
+        fn in_unit_sphere_norm_le_1(s in arb_sample3d()) {
+            let v = random_in_unit_sphere(s);
+            let n = v.norm();
+            prop_assert!(n <= 1.0 + 1e-6, "||v||={} > 1", n);
+        }
+
+        #[test]
+        fn on_unit_sphere_norm_approx_1(s in arb_sample2d()) {
+            let v = random_on_unit_sphere(s);
+            let n = v.norm();
+            prop_assert!((n - 1.0).abs() < 1e-4, "||v||={}", n);
+        }
+
+        #[test]
+        fn in_unit_disk_constraints(s in arb_sample2d()) {
+            let v = random_in_unit_disk(s);
+            let r2 = v.x() * v.x() + v.y() * v.y();
+            prop_assert!(r2 <= 1.0 + 1e-6, "x^2+y^2={} > 1", r2);
+            prop_assert!(v.z().abs() < 1e-6, "z={} should be 0", v.z());
+        }
+
+        #[test]
+        fn cosine_direction_upper_hemisphere(s in arb_sample2d()) {
+            let v = random_cosine_direction(s);
+            prop_assert!(v.z() >= 0.0, "z={} < 0", v.z());
+        }
+
+        #[test]
+        fn cosine_direction_approx_unit(s in arb_sample2d()) {
+            let v = random_cosine_direction(s);
+            let n = v.norm();
+            prop_assert!((n - 1.0).abs() < 1e-3, "||v||={}", n);
+        }
+
+        #[test]
+        fn weighted_cosine_direction_unit(s in arb_sample2d(), w in 0.1f32..2.0) {
+            let v = weighted_cosine_direction(s, w);
+            let n = v.norm();
+            prop_assert!((n - 1.0).abs() < 1e-3, "||v||={}", n);
+        }
+
+        #[test]
+        fn random_to_sphere_z_ge_threshold(s in arb_sample2d()) {
+            // radius=1 at distance=2 => distance_squared=4
+            let v = random_to_sphere(s, 1.0, 4.0);
+            let n = v.norm();
+            prop_assert!((n - 1.0).abs() < 1e-3, "||v||={}", n);
+            // z should be >= cos(asin(radius/distance)) = cos(asin(0.5)) ~= 0.866
+            let cos_theta_max = (1.0 - 1.0 / 4.0f32).sqrt();
+            prop_assert!(v.z() >= cos_theta_max - 1e-3, "z={} < threshold={}", v.z(), cos_theta_max);
+        }
+    }
+}

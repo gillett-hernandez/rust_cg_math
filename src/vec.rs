@@ -210,6 +210,7 @@ impl From<Point3> for Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_vec() {
@@ -217,5 +218,124 @@ mod tests {
         assert!(v.norm() > 100.0);
         assert!(v.norm_squared() > 10000.0);
         assert!(v.normalized().norm() - 1.0 < 0.000001);
+    }
+
+    fn arb_vec3() -> impl Strategy<Value = Vec3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    }
+
+    fn arb_nonzero_vec3() -> impl Strategy<Value = Vec3> {
+        arb_vec3().prop_filter("nonzero", |v| v.norm() > 1e-6)
+    }
+
+    #[test]
+    fn test_zero_identity() {
+        let v = Vec3::new(3.0, -1.0, 7.0);
+        let result = v + Vec3::ZERO;
+        assert_eq!(result.x(), v.x());
+        assert_eq!(result.y(), v.y());
+        assert_eq!(result.z(), v.z());
+    }
+
+    #[test]
+    fn test_w_is_zero() {
+        let v = Vec3::new(1.0, 2.0, 3.0);
+        assert_eq!(v.w(), 0.0);
+    }
+
+    #[test]
+    fn test_from_axis() {
+        assert_eq!(Vec3::from_axis(Axis::X), Vec3::X);
+        assert_eq!(Vec3::from_axis(Axis::Y), Vec3::Y);
+        assert_eq!(Vec3::from_axis(Axis::Z), Vec3::Z);
+    }
+
+    proptest! {
+        #[test]
+        fn dot_product_commutative(a in arb_vec3(), b in arb_vec3()) {
+            let ab = a * b;
+            let ba = b * a;
+            prop_assert!((ab - ba).abs() < 1e-3, "a*b={}, b*a={}", ab, ba);
+        }
+
+        #[test]
+        fn cross_product_orthogonal(a in arb_nonzero_vec3(), b in arb_nonzero_vec3()) {
+            let c = a.cross(b);
+            if c.norm() > 1e-6 {
+                // use relative tolerance since absolute error scales with magnitude
+                let scale = a.norm() * b.norm() * c.norm();
+                let dot_a = (c * a).abs() / scale;
+                let dot_b = (c * b).abs() / scale;
+                prop_assert!(dot_a < 1e-4, "(a x b) . a / scale = {}", dot_a);
+                prop_assert!(dot_b < 1e-4, "(a x b) . b / scale = {}", dot_b);
+            }
+        }
+
+        #[test]
+        fn cross_product_anticommutative(a in arb_vec3(), b in arb_vec3()) {
+            let ab = a.cross(b);
+            let ba = b.cross(a);
+            let diff = (ab + ba).norm();
+            prop_assert!(diff < 1e-3, "a x b + b x a = {}", diff);
+        }
+
+        #[test]
+        fn normalization_produces_unit(v in arb_nonzero_vec3()) {
+            let n = v.normalized();
+            let norm = n.norm();
+            prop_assert!((norm - 1.0).abs() < 1e-4, "||normalized|| = {}", norm);
+        }
+
+        #[test]
+        fn norm_homogeneity(v in arb_nonzero_vec3(), k in -100.0f32..100.0) {
+            let scaled_norm = (v * k).norm();
+            let expected = k.abs() * v.norm();
+            let rel_err = if expected > 1e-6 { (scaled_norm - expected).abs() / expected } else { (scaled_norm - expected).abs() };
+            prop_assert!(rel_err < 1e-4, "||kv||={}, |k|*||v||={}, rel_err={}", scaled_norm, expected, rel_err);
+        }
+
+        #[test]
+        fn add_sub_inverse(a in arb_vec3(), b in arb_vec3()) {
+            let result = (a + b) - b;
+            let diff = (result - a).norm();
+            prop_assert!(diff < 1e-2, "(a+b)-b != a, diff={}", diff);
+        }
+
+        #[test]
+        fn negation_inverse(v in arb_vec3()) {
+            let result = v + (-v);
+            prop_assert!(result.norm() < 1e-6, "v + (-v) != 0, got {:?}", result);
+        }
+
+        #[test]
+        fn scalar_mul_distributive(a in arb_vec3(), b in arb_vec3(), s in -10.0f32..10.0) {
+            let lhs = (a + b) * s;
+            let rhs = a * s + b * s;
+            let diff = (lhs - rhs).norm();
+            prop_assert!(diff < 1e-1, "distributivity error = {}", diff);
+        }
+
+        #[test]
+        fn scalar_mul_commutativity(v in arb_vec3(), s in -100.0f32..100.0) {
+            let a = v * s;
+            let b = s * v;
+            prop_assert_eq!(a.x(), b.x());
+            prop_assert_eq!(a.y(), b.y());
+            prop_assert_eq!(a.z(), b.z());
+        }
+
+        #[test]
+        fn from_array_roundtrip(x in -1e4f32..1e4, y in -1e4f32..1e4, z in -1e4f32..1e4) {
+            let v = Vec3::new(x, y, z);
+            prop_assert_eq!(v.x(), x);
+            prop_assert_eq!(v.y(), y);
+            prop_assert_eq!(v.z(), z);
+        }
+
+        #[test]
+        fn is_finite_for_normal_values(v in arb_vec3()) {
+            prop_assert!(v.is_finite());
+        }
     }
 }

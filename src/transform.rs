@@ -286,6 +286,121 @@ impl Mul<Transform3> for Transform3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+
+    fn arb_vec3() -> impl Strategy<Value = Vec3> {
+        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    }
+
+    fn arb_unit_vec3() -> impl Strategy<Value = Vec3> {
+        arb_vec3()
+            .prop_filter("nonzero", |v| v.norm() > 0.01)
+            .prop_map(|v| v.normalized())
+    }
+
+    fn arb_point3() -> impl Strategy<Value = Point3> {
+        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0)
+            .prop_map(|(x, y, z)| Point3::new(x, y, z))
+    }
+
+    fn arb_rotation() -> impl Strategy<Value = Transform3> {
+        (arb_unit_vec3(), -PI..PI).prop_map(|(axis, angle)| {
+            Transform3::from_axis_angle(axis, angle)
+        })
+    }
+
+    fn arb_translation() -> impl Strategy<Value = Transform3> {
+        arb_vec3().prop_map(|v| Transform3::from_translation(v))
+    }
+
+    fn arb_nonzero_scale() -> impl Strategy<Value = Transform3> {
+        (0.1f32..5.0, 0.1f32..5.0, 0.1f32..5.0)
+            .prop_map(|(x, y, z)| Transform3::from_scale(Vec3::new(x, y, z)))
+    }
+
+    proptest! {
+        #[test]
+        fn identity_transform_is_noop_vec(v in arb_vec3()) {
+            let t = Transform3::new();
+            let result = t.to_world(v);
+            let diff = (result - v).norm();
+            prop_assert!(diff < 1e-6, "identity transform moved vec by {}", diff);
+        }
+
+        #[test]
+        fn identity_transform_is_noop_point(p in arb_point3()) {
+            let t = Transform3::new();
+            let result = t.to_world(p);
+            let diff = (result - p).norm();
+            prop_assert!(diff < 1e-6, "identity transform moved point by {}", diff);
+        }
+
+        #[test]
+        fn rotation_preserves_vec_length(r in arb_rotation(), v in arb_vec3()) {
+            let rotated = r.to_world(v);
+            let orig_norm = v.norm();
+            let new_norm = rotated.norm();
+            prop_assert!(
+                (orig_norm - new_norm).abs() < 1e-3,
+                "rotation changed norm: {} -> {}", orig_norm, new_norm
+            );
+        }
+
+        #[test]
+        fn roundtrip_vec_rotation(r in arb_rotation(), v in arb_vec3()) {
+            let roundtrip = r.to_local(r.to_world(v));
+            let diff = (roundtrip - v).norm();
+            prop_assert!(diff < 1e-2, "rotation roundtrip error={}", diff);
+        }
+
+        #[test]
+        fn roundtrip_point_translation(t in arb_translation(), p in arb_point3()) {
+            let roundtrip = t.to_local(t.to_world(p));
+            let diff = (roundtrip - p).norm();
+            prop_assert!(diff < 1e-2, "translation roundtrip error={}", diff);
+        }
+
+        #[test]
+        fn roundtrip_vec_scale(s in arb_nonzero_scale(), v in arb_vec3()) {
+            let roundtrip = s.to_local(s.to_world(v));
+            let diff = (roundtrip - v).norm();
+            prop_assert!(diff < 1e-2, "scale roundtrip error={}", diff);
+        }
+
+        #[test]
+        fn inverse_inverse_is_identity(r in arb_rotation(), v in arb_vec3()) {
+            let inv_inv = r.inverse().inverse();
+            let a = r.to_world(v);
+            let b = inv_inv.to_world(v);
+            let diff = (a - b).norm();
+            prop_assert!(diff < 1e-2, "double inverse error={}", diff);
+        }
+
+        #[test]
+        fn translation_does_not_affect_vectors(t in arb_translation(), v in arb_vec3()) {
+            // translation should not change vectors (only points)
+            let result = t.to_world(v);
+            let diff = (result - v).norm();
+            prop_assert!(diff < 1e-4, "translation moved vector by {}", diff);
+        }
+
+        #[test]
+        fn from_stack_matches_manual_composition(
+            s in arb_nonzero_scale(),
+            r in arb_rotation(),
+            t in arb_translation(),
+            v in arb_vec3()
+        ) {
+            let stacked = Transform3::from_stack(Some(s), Some(r), Some(t));
+            let manual = t * r * s;
+            let a = stacked.to_world(v);
+            let b = manual.to_world(v);
+            let diff = (a - b).norm();
+            prop_assert!(diff < 1e-2, "stack vs manual diff={}", diff);
+        }
+    }
+
     #[test]
     fn test_transform() {
         let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));

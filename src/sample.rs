@@ -233,6 +233,28 @@ impl Sampler for StratifiedSampler {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn sample1d_choose_returns_valid_sample(x in 0.0f32..0.9999, split in 0.01f32..0.99) {
+            let s = Sample1D { x };
+            let (new_s, _chosen) = s.choose(split, "a", "b");
+            prop_assert!(new_s.x >= 0.0 && new_s.x < 1.0 + 1e-6, "choose produced x={}", new_s.x);
+        }
+
+        #[test]
+        fn sample1d_choose_picks_correctly(x in 0.0f32..0.9999, split in 0.01f32..0.99) {
+            let s = Sample1D { x };
+            let (_, chosen) = s.choose(split, "a", "b");
+            if x < split {
+                prop_assert_eq!(chosen, "a");
+            } else {
+                prop_assert_eq!(chosen, "b");
+            }
+        }
+    }
+
     fn function(x: f32) -> f32 {
         x * x - x + 1.0
     }

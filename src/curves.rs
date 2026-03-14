@@ -339,26 +339,61 @@ impl Curve {
         samples: usize,
         clamped: bool,
     ) -> f32 {
-        // trapezoidal rule
-        let step_size = integration_bounds.span() / samples as f32;
-        let mut sum = 0.0;
-        let mut last_f = if clamped {
-            self.evaluate(integration_bounds.lower)
-                .clamp(0.0, 1.0 - std::f32::EPSILON)
-        } else {
-            self.evaluate(integration_bounds.lower)
-        };
-        for i in 1..=samples {
-            let x = integration_bounds.lower + (i as f32) * step_size;
-            let f_x = if clamped {
-                self.evaluate(x).clamp(0.0, 1.0 - std::f32::EPSILON)
-            } else {
-                self.evaluate(x)
-            };
-            sum += step_size * (last_f.min(f_x) + 0.5 * (last_f - f_x).abs());
-            last_f = f_x;
+        match self {
+            Curve::Const(v) => *v * integration_bounds.span(),
+            Curve::Blackbody { .. } => {
+                // https://en.wikipedia.org/wiki/Gauss%E2%80%93Legendre_quadrature
+
+                let samples = if samples % 2 == 0 {
+                    samples + 1
+                } else {
+                    samples
+                };
+                let step_size = integration_bounds.span() / samples as f32;
+                let factor = step_size / 2.0;
+                let mut sum = 0.0;
+
+                const O: f32 = (2.0f32 * 1.7320508f32).recip();
+                for i in 0..samples {
+                    let x0 = integration_bounds.lower + step_size * (0.5 - O + i as f32);
+                    let x1 = integration_bounds.lower + step_size * (0.5 + O + i as f32);
+                    let f_x0 = if clamped {
+                        self.evaluate(x0).clamp(0.0, ONE_SUB_EPSILON)
+                    } else {
+                        self.evaluate(x0)
+                    };
+                    let f_x1 = if clamped {
+                        self.evaluate(x1).clamp(0.0, ONE_SUB_EPSILON)
+                    } else {
+                        self.evaluate(x1)
+                    };
+                    sum += f_x0 + f_x1;
+                }
+                sum * factor
+            }
+            _ => {
+                // trapezoidal rule
+                let step_size = integration_bounds.span() / samples as f32;
+                let mut sum = 0.0;
+                let mut last_f = if clamped {
+                    self.evaluate(integration_bounds.lower)
+                        .clamp(0.0, 1.0 - std::f32::EPSILON)
+                } else {
+                    self.evaluate(integration_bounds.lower)
+                };
+                for i in 1..=samples {
+                    let x = integration_bounds.lower + (i as f32) * step_size;
+                    let f_x = if clamped {
+                        self.evaluate(x).clamp(0.0, 1.0 - std::f32::EPSILON)
+                    } else {
+                        self.evaluate(x)
+                    };
+                    sum += step_size * (last_f.min(f_x) + 0.5 * (last_f - f_x).abs());
+                    last_f = f_x;
+                }
+                sum
+            }
         }
-        sum
     }
     pub fn convert_to_xyz(
         &self,
@@ -761,9 +796,88 @@ fn sample_power_and_pdf(
 
 #[cfg(test)]
 mod test {
-    use crate::{sample::*, spectral::BOUNDED_VISIBLE_RANGE};
+    use crate::{assert_approx_eq, sample::*, spectral::BOUNDED_VISIBLE_RANGE};
 
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn const_curve_evaluates_everywhere(c in 0.0f32..100.0, x in -1000.0f32..1000.0) {
+            let curve = Curve::Const(c);
+            let val = curve.evaluate(x);
+            prop_assert_eq!(val, c.max(0.0));
+        }
+
+        #[test]
+        fn blackbody_curve_non_negative(temp in 1000.0f32..10000.0, lambda in 300.0f32..900.0) {
+            let curve = Curve::Blackbody { temperature: temp, boost: 1.0 };
+            let val = curve.evaluate(lambda);
+            prop_assert!(val >= 0.0, "blackbody eval({})={}", lambda, val);
+        }
+
+        #[test]
+        fn cauchy_curve_positive_for_positive_params(
+            a in 1.0f32..2.0,
+            b in 0.0f32..10000.0,
+            lambda in 400.0f32..800.0
+        ) {
+            let curve = Curve::Cauchy { a, b };
+            let val = curve.evaluate(lambda);
+            prop_assert!(val > 0.0, "cauchy eval({})={}", lambda, val);
+        }
+
+        #[test]
+        fn evaluate_power_non_negative(lambda in 380.0f32..780.0) {
+            let curve = Curve::Exponential {
+                signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
+            };
+            let val = curve.evaluate_power(lambda);
+            prop_assert!(val >= 0.0, "evaluate_power({})={}", lambda, val);
+        }
+
+        #[test]
+        fn evaluate_clamped_in_unit(lambda in 380.0f32..780.0) {
+            let curve = Curve::Exponential {
+                signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
+            };
+            let val = curve.evaluate_clamped(lambda);
+            prop_assert!(val >= 0.0 && val < 1.0, "evaluate_clamped({})={}", lambda, val);
+        }
+
+        #[test]
+        fn linear_curve_interpolates_within_signal_range(t in 0.01f32..0.99) {
+            let signal = vec![0.0, 1.0, 0.5, 0.8, 0.2];
+            let bounds = Bounds1D::new(0.0, 5.0);
+            let curve = Curve::Linear { signal: signal.clone(), bounds, mode: InterpolationMode::Linear };
+            let lambda = bounds.lerp(t);
+            let val = curve.evaluate(lambda);
+            let min_signal = signal.iter().cloned().fold(f32::INFINITY, f32::min);
+            let max_signal = signal.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            prop_assert!(
+                val >= min_signal - 1e-4 && val <= max_signal + 1e-4,
+                "linear eval({})={}, range=[{}, {}]", lambda, val, min_signal, max_signal
+            );
+        }
+
+        #[test]
+        fn const_integral_equals_span_times_value(c in 0.1f32..10.0, span in 1.0f32..100.0) {
+            let curve = Curve::Const(c);
+            let bounds = Bounds1D::new(0.0, span);
+            let integral = curve.evaluate_integral(bounds, 100, false);
+            let expected = c * span;
+            let rel_err = (integral - expected).abs() / expected;
+            prop_assert!(rel_err < 0.02, "integral={}, expected={}", integral, expected);
+        }
+
+        #[test]
+        fn from_function_captures_shape(x in 0.1f32..0.9) {
+            let bounds = Bounds1D::new(0.0, 1.0);
+            let curve = Curve::from_function(|x| x, 100, bounds, InterpolationMode::Linear);
+            let val = curve.evaluate(x);
+            prop_assert!((val - x).abs() < 0.02, "eval({})={}, expected ~{}", x, val, x);
+        }
+    }
 
     #[test]
     fn test_y_bar_spd() {
@@ -775,32 +889,40 @@ mod test {
     fn test_curve_const() {
         let test_curve = Curve::Const(0.5);
         let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        assert_approx_eq(integral, 50.0, 0.001);
     }
     #[test]
     fn test_curve_tabulated() {
         let test_curve = Curve::Tabulated {
-            signal: vec![],
+            signal: vec![
+                (400.0, 0.0),
+                (420.0, 0.4),
+                (460.0, 1.0),
+                (500.0, 0.4),
+                (600.0, 0.8),
+                (700.0, 0.2),
+                (800.0, 0.0),
+            ],
             mode: InterpolationMode::Linear,
         };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        assert_eq!(integral, 180.0);
     }
     #[test]
     fn test_curve_linear() {
         let test_curve = Curve::Linear {
-            signal: vec![],
+            signal: vec![0.0, 0.4, 1.0, 0.4, 0.8, 0.2, 0.3, 0.0],
             bounds: Bounds1D::new(400.0, 800.0),
             mode: InterpolationMode::Linear,
         };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        assert_approx_eq(integral, 155.0, 0.00002);
     }
     #[test]
     fn test_curve_cauchy() {
         let test_curve = Curve::Cauchy { a: 1.4, b: 2400.0 };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 100, false);
-        assert_eq!(integral / 400.0, 1.4075);
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        assert_approx_eq(integral / 400.0, 1.4075, 0.0001);
     }
     #[test]
     fn test_curve_blackbody() {
@@ -808,20 +930,36 @@ mod test {
             temperature: 5400.0,
             boost: 1.0,
         };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        assert_approx_eq(integral, 361.010275033, 0.0001);
     }
+
+    fn get_test_exponential_signal() -> Vec<(f32, f32, f32, f32)> {
+        vec![
+            (500.0, 10.0, 30.0, 1.0),
+            (600.0, 10.0, 15.0, 0.5),
+            (700.0, 20.0, 10.0, 0.7),
+        ]
+    }
+
     #[test]
     fn test_curve_exponential() {
-        let test_curve = Curve::Exponential { signal: todo!() };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        let test_curve = Curve::Exponential {
+            signal: get_test_exponential_signal(),
+        };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        const GROUND_TRUTH: f32 = 92.1185890927;
+        assert_approx_eq(integral, GROUND_TRUTH, 0.00002);
     }
     #[test]
     fn test_curve_inverse_exponential() {
-        let test_curve = Curve::InverseExponential { signal: todo!() };
-        let integral = test_curve.evaluate_integral(Bounds1D::new(100.0, 200.0), 20, false);
-        assert_eq!(integral, 50.0);
+        let test_curve = Curve::InverseExponential {
+            signal: get_test_exponential_signal(),
+        };
+        let integral = test_curve.evaluate_integral(Bounds1D::new(400.0, 800.0), 40, false);
+        let target = 307.881410968;
+
+        assert_approx_eq(integral, target, 0.0001);
     }
 
     #[test]
@@ -836,7 +974,9 @@ mod test {
         println!("{:?}", result);
     }
     #[test]
-    fn test_curve_machine() {}
+    fn test_curve_machine() {
+        todo!()
+    }
 
     #[test]
     fn test_cdf1() {

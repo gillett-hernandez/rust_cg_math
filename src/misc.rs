@@ -82,6 +82,62 @@ pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn power_heuristic_in_unit_range(a in 0.0f32..100.0, b in 0.0f32..100.0) {
+            prop_assume!(a + b > 1e-6);
+            let h = power_heuristic(a, b);
+            prop_assert!(h >= 0.0 && h <= 1.0, "power_heuristic({}, {}) = {}", a, b, h);
+        }
+
+        #[test]
+        fn power_heuristic_complement(a in 0.01f32..100.0, b in 0.01f32..100.0) {
+            let h1 = power_heuristic(a, b);
+            let h2 = power_heuristic(b, a);
+            let sum = h1 + h2;
+            prop_assert!((sum - 1.0).abs() < 1e-4, "h(a,b)+h(b,a)={}", sum);
+        }
+
+        #[test]
+        fn blackbody_non_negative(temp in 1000.0f32..10000.0, lambda in 300.0f32..900.0) {
+            let val = blackbody(temp, lambda);
+            prop_assert!(val >= 0.0, "blackbody({}, {}) = {}", temp, lambda, val);
+        }
+
+        #[test]
+        fn max_blackbody_lambda_decreases_with_temp(t1 in 1000.0f32..5000.0, t2 in 5001.0f32..10000.0) {
+            let l1 = max_blackbody_lambda(t1);
+            let l2 = max_blackbody_lambda(t2);
+            prop_assert!(l1 > l2, "Wien: peak({})={} should be > peak({})={}", t1, l1, t2, l2);
+        }
+
+        #[test]
+        fn gaussian_non_negative_positive_alpha(x in -100.0f64..100.0) {
+            let val = gaussian(x, 1.0, 0.0, 10.0, 10.0);
+            prop_assert!(val >= 0.0, "gaussian({})={}", x, val);
+        }
+
+        #[test]
+        fn uv_to_direction_unit_length(u in 0.01f32..0.99, v in 0.01f32..0.99) {
+            let dir = uv_to_direction((u, v));
+            let n = dir.norm();
+            prop_assert!((n - 1.0).abs() < 1e-4, "||dir||={}", n);
+        }
+
+        #[test]
+        fn uv_direction_roundtrip(u in 0.01f32..0.99, v in 0.01f32..0.99) {
+            let dir = uv_to_direction((u, v));
+            let (u2, v2) = direction_to_uv(dir);
+            let err_u = (u - u2).abs();
+            let err_v = (v - v2).abs();
+            // skip poles where atan2 is degenerate
+            prop_assume!(v > 0.01 && v < 0.99);
+            prop_assert!(err_u < 1e-3, "u roundtrip: {} -> {}", u, u2);
+            prop_assert!(err_v < 1e-3, "v roundtrip: {} -> {}", v, v2);
+        }
+    }
 
     #[test]
     fn test_direction_to_uv() {

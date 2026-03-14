@@ -110,3 +110,98 @@ impl From<Vec3> for Point3 {
         // Point3::from_raw(v.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vec::Vec3;
+    use proptest::prelude::*;
+
+    fn arb_vec3() -> impl Strategy<Value = Vec3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    }
+
+    fn arb_point3() -> impl Strategy<Value = Point3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
+            .prop_map(|(x, y, z)| Point3::new(x, y, z))
+    }
+
+    #[test]
+    fn test_origin_equals_zero() {
+        assert_eq!(Point3::ORIGIN, Point3::ZERO);
+        assert_eq!(Point3::ORIGIN, Point3::new(0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_default_is_origin() {
+        assert_eq!(Point3::default(), Point3::ORIGIN);
+    }
+
+    #[test]
+    fn test_w_coordinate() {
+        let p = Point3::new(1.0, 2.0, 3.0);
+        assert_eq!(p.w(), 1.0);
+    }
+
+    proptest! {
+        #[test]
+        fn component_access(x in -1e4f32..1e4, y in -1e4f32..1e4, z in -1e4f32..1e4) {
+            let p = Point3::new(x, y, z);
+            prop_assert_eq!(p.x(), x);
+            prop_assert_eq!(p.y(), y);
+            prop_assert_eq!(p.z(), z);
+            prop_assert_eq!(p.w(), 1.0);
+        }
+
+        #[test]
+        fn point_sub_point_is_vec(p1 in arb_point3(), p2 in arb_point3()) {
+            let v: Vec3 = p2 - p1;
+            // p1 + v should equal p2
+            let result = p1 + v;
+            let diff = (result - p2).norm();
+            prop_assert!(diff < 1e-2, "p1 + (p2 - p1) != p2, diff={}", diff);
+        }
+
+        #[test]
+        fn point_add_sub_vec_roundtrip(p in arb_point3(), v in arb_vec3()) {
+            let result = (p + v) - v;
+            let diff = (result - p).norm();
+            prop_assert!(diff < 1e-2, "(p + v) - v != p, diff={}", diff);
+        }
+
+        #[test]
+        fn point_sub_vec_roundtrip(p in arb_point3(), v in arb_vec3()) {
+            let result = (p - v) + v;
+            let diff = (result - p).norm();
+            prop_assert!(diff < 1e-2, "(p - v) + v != p, diff={}", diff);
+        }
+
+        #[test]
+        fn from_vec3_correctness(v in arb_vec3()) {
+            let p = Point3::from(v);
+            prop_assert!((p.x() - v.x()).abs() < 1e-6);
+            prop_assert!((p.y() - v.y()).abs() < 1e-6);
+            prop_assert!((p.z() - v.z()).abs() < 1e-6);
+        }
+
+        #[test]
+        fn from_array_correctness(x in -1e4f32..1e4, y in -1e4f32..1e4, z in -1e4f32..1e4) {
+            let p = Point3::from([x, y, z]);
+            prop_assert_eq!(p.x(), x);
+            prop_assert_eq!(p.y(), y);
+            prop_assert_eq!(p.z(), z);
+        }
+
+        #[test]
+        fn is_finite_for_normal_values(p in arb_point3()) {
+            prop_assert!(p.is_finite());
+        }
+    }
+
+    #[test]
+    fn test_infinity_is_not_finite() {
+        assert!(!Point3::INFINITY.is_finite());
+        assert!(!Point3::NEG_INFINITY.is_finite());
+    }
+}

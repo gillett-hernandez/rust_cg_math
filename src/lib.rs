@@ -32,6 +32,17 @@ pub enum Sidedness {
 }
 
 #[cfg(test)]
+pub(crate) fn assert_approx_eq(a: f32, b: f32, epsilon: f32) {
+    assert!(
+        (a - b).abs() < epsilon,
+        "a was {}, b was {}, diff = {}",
+        a,
+        b,
+        (a - b).abs()
+    );
+}
+
+#[cfg(test)]
 mod test {
 
     use super::prelude::*;
