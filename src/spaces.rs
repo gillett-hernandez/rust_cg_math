@@ -7,7 +7,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 
 // pub struct R<T: Unsigned>(PhantomData<T>);
 
-pub trait SpaceParameterization: Default + Clone {
+pub trait SpaceParameterization: Default + Clone + Copy {
     type SimpleSet;
     type Element;
     const SPACE: Self::SimpleSet;
@@ -16,7 +16,7 @@ pub trait SpaceParameterization: Default + Clone {
 pub type SimpleSet<M> = <M as SpaceParameterization>::SimpleSet;
 pub type Element<M> = <M as SpaceParameterization>::Element;
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct ProductSet<A: SpaceParameterization, B: SpaceParameterization> {
     pub a: A,
     pub b: B,
@@ -31,7 +31,7 @@ impl<A: SpaceParameterization, B: SpaceParameterization> SpaceParameterization
     const SPACE: Self::SimpleSet = (A::SPACE, B::SPACE);
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct R;
 
 impl SpaceParameterization for R {
@@ -41,7 +41,7 @@ impl SpaceParameterization for R {
     const SPACE: Self::SimpleSet = Bounds1D::new(f32::NEG_INFINITY, f32::INFINITY);
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct UnitInterval;
 
 impl SpaceParameterization for UnitInterval {
@@ -50,7 +50,7 @@ impl SpaceParameterization for UnitInterval {
     const SPACE: Self::SimpleSet = Bounds1D::new(0.0, 1.0);
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct Circle;
 
 impl SpaceParameterization for Circle {
@@ -66,7 +66,7 @@ pub type DiskSpace = ProductSet<Circle, UnitInterval>;
 /// only the surface - space of directions, solid angle, and surface area
 /// theta phi parameterization, aka spherical coordinates
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct SphericalCoordinates;
 
 impl SpaceParameterization for SphericalCoordinates {
@@ -83,7 +83,7 @@ impl SpaceParameterization for SphericalCoordinates {
 /// includes interior
 pub type SphericalCoordinatesBall = ProductSet<SphericalCoordinates, UnitInterval>;
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, Debug)]
 pub struct DirectionalSector;
 
 impl SpaceParameterization for DirectionalSector {

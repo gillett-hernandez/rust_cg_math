@@ -110,7 +110,7 @@ impl Measure for DiskAreaMeasure {
 /// when in differential form, represents an infinitesimal increase in solid angle.
 ///      = sin(theta) d[theta] d[phi]
 ///      = d[cos theta] d[phi]
-// #[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct SolidAngle<P: SpaceParameterization>(PhantomData<P>);
 impl Measure for SolidAngle<SphericalCoordinates> {
     type Space = SphericalCoordinates;
