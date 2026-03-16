@@ -4,7 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::prelude::*;
+use crate::{prelude::*, spaces::SpaceParameterization};
 
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 pub struct PDF<T: Field, M: Measure> {
@@ -98,46 +98,50 @@ where
 } */
 
 // special conversions
-// impl<T: Field> PDF<T, SolidAngle> {
-//     pub fn convert_to_projected_solid_angle<S: Scalar>(
-//         &self,
-//         cos_theta: S,
-//     ) -> PDF<T, ProjectedSolidAngle>
-//     where
-//         T: FromScalar<S>,
-//     {
-//         PDF::new(self.v * T::from_scalar(cos_theta).abs())
-//     }
-// }
+impl<T: Field, P: SpaceParameterization> PDF<T, SolidAngle<P>>
+where
+    SolidAngle<P>: Measure,
+{
+    pub fn convert_to_projected_solid_angle<S: Scalar>(
+        &self,
+        cos_theta: S,
+    ) -> PDF<T, ProjectedSolidAngle>
+    where
+        T: FromScalar<S>,
+    {
+        PDF::new(self.v * T::from_scalar(cos_theta).abs())
+    }
+}
 
-// impl<T: Field> PDF<T, Area> {
-//     pub fn convert_to_solid_angle<S: Scalar>(
-//         &self,
-//         cos_theta: S,
-//         distance_squared: S,
-//     ) -> PDF<T, SolidAngle>
-//     where
-//         T: FromScalar<S>,
-//     {
-//         PDF::new(self.v * T::from_scalar(cos_theta).abs() / T::from_scalar(distance_squared))
-//     }
-// }
+impl<T: Field> PDF<T, Area> {
+    pub fn convert_to_solid_angle<S: Scalar, P: SpaceParameterization>(
+        &self,
+        cos_theta: S,
+        distance_squared: S,
+    ) -> PDF<T, SolidAngle<P>>
+    where
+        T: FromScalar<S>,
+        SolidAngle<P>: Measure,
+    {
+        PDF::new(self.v * T::from_scalar(cos_theta).abs() / T::from_scalar(distance_squared))
+    }
+}
 
-// impl<T: Field> PDF<T, Area> {
-//     pub fn convert_to_projected_solid_angle<S: Scalar>(
-//         &self,
-//         cos_i: S,
-//         cos_o: S,
-//         distance_squared: S,
-//     ) -> PDF<T, ProjectedSolidAngle>
-//     where
-//         T: FromScalar<S>,
-//     {
-//         // this is valid, but probably somewhat slower.
-//         // self.convert_to(cos_i, distance_squared).convert_to(cos_o)
-//         PDF::new(self.v * T::from_scalar(cos_o * cos_i).abs() / T::from_scalar(distance_squared))
-//     }
-// }
+impl<T: Field> PDF<T, Area> {
+    pub fn convert_to_projected_solid_angle<S: Scalar>(
+        &self,
+        cos_i: S,
+        cos_o: S,
+        distance_squared: S,
+    ) -> PDF<T, ProjectedSolidAngle>
+    where
+        T: FromScalar<S>,
+    {
+        // this is valid, but probably somewhat slower.
+        // self.convert_to(cos_i, distance_squared).convert_to(cos_o)
+        PDF::new(self.v * T::from_scalar(cos_o * cos_i).abs() / T::from_scalar(distance_squared))
+    }
+}
 
 // // impl<T> PDF<T, ProjectedSolidAngle> where T: Field {}
 // impl<T: Field> PDF<T, ProjectedSolidAngle> {

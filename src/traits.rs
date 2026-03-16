@@ -142,6 +142,8 @@ impl Measure for SolidAngle<DirectionalSector> {
     }
 }
 
+// TODO: parameterize ProjectedSolidAngle with a P: SpaceParameterization similarly to SolidAngle, instead of just for SphericalCoordinates
+
 /// projected solid angle measure, defined on the set of directions
 /// the measure of a whole hemisphere is pi
 /// represents the solid angle measure shrinked by a factor of the cosine of the angle and the surface normal
