@@ -59,13 +59,13 @@ impl<T: Field, M: Measure> From<T> for PDF<T, M> {
         PDF::new_with_measure(self.v + rhs.v, self.measure.combine(rhs.measure))
     }
 } */
-// impl<T: Field, M: Measure> Mul for PDF<T, M>{
-//     type Output = Self;
-//     // must be under the same field and measure
-//     fn mul(self, rhs: Self) -> Self::Output {
-//         PDF::new_with_measure(self.v * rhs.v, self.measure.combine(rhs.measure))
-//     }
-// }
+impl<T: Field, M: Measure> Mul<T> for PDF<T, M> {
+    type Output = Self;
+    // must be under the same field and measure
+    fn mul(self, rhs: T) -> Self::Output {
+        PDF::new(self.v * rhs)
+    }
+}
 
 /*impl<T: Field, M: Measure> Div for PDF<T, M> {
     // must be under the same field and measure
