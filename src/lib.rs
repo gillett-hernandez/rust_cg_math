@@ -52,7 +52,7 @@ mod test {
         let mut sum = 0.0;
         let mut sum_of_squares = 0.0;
 
-        let n = 100000;
+        let n = 10000;
 
         for _ in 0..n {
             let sample = debug_random();
@@ -63,7 +63,6 @@ mod test {
             sum_of_squares += sample * sample;
         }
 
-        let true_integral = 0.5;
         let estimate = sum / n as f32;
         let variance_0 = samples
             .iter()
@@ -71,17 +70,15 @@ mod test {
             .sum::<f32>()
             / n as f32;
         let variance_1 = sum_of_squares / n as f32 - estimate * estimate;
-        println!("{} {}", estimate, true_integral);
-        println!("{:?} {:?}", variance_0, variance_1);
-    }
 
-    #[test]
-    fn test_adaptive_stratified_sampling() {
-        let complex_curve = Curve::Linear {
-            signal: vec![],
-            bounds: Bounds1D::new(0.0, 1.0),
-            mode: InterpolationMode::Cubic,
-        };
-        // TODO: finish writing this
+        // estimate of uniform [0,1] mean should be near 0.5
+        assert!((estimate - 0.5).abs() < 0.05, "estimate {} too far from 0.5", estimate);
+        // both variance calculations should approximately agree
+        assert!(
+            (variance_0 - variance_1).abs() < 0.001,
+            "variance methods disagree: {} vs {}",
+            variance_0,
+            variance_1
+        );
     }
 }

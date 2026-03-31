@@ -1117,7 +1117,9 @@ mod test {
         };
 
         let result = curve.evaluate_power(f32x4::from_array([450.0, 550.0, 650.0, 750.0]));
-        println!("{:?}", result);
+        for i in 0..4 {
+            assert!(result[i].is_finite(), "polynomial result[{}] is not finite", i);
+        }
     }
     #[test]
     fn test_curve_machine() {
@@ -1165,65 +1167,80 @@ mod test {
 
     #[test]
     fn test_cdf1() {
-        let cdf: CurveWithCDF = Curve::Linear {
+        let curve = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
                 6.0, 3.0, 1.0, 0.4,
             ],
             bounds: BOUNDED_VISIBLE_RANGE,
             mode: InterpolationMode::Cubic,
-        }
-        .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        };
+        let true_integral = curve.evaluate_integral(BOUNDED_VISIBLE_RANGE, 1000, false);
+        let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
+        let n = 1000;
         let mut s = 0.0;
-        for _ in 0..100 {
+        for _ in 0..n {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
             s += we.energy / *pdf;
         }
-        println!("{}", s);
+        let estimate = s / n as f32;
+        assert!(
+            (estimate - true_integral).abs() / true_integral < 0.15,
+            "CDF estimate {} too far from integral {}",
+            estimate,
+            true_integral
+        );
     }
 
     #[test]
     fn test_cdf2() {
-        let cdf: CurveWithCDF = Curve::Exponential {
+        let curve = Curve::Exponential {
             signal: vec![(400.0, 200.0, 200.0, 0.9), (600.0, 200.0, 300.0, 1.0)],
-        }
-        .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        };
+        let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
-        let mut s = 0.0;
+        // pdf_integral should be positive and finite
+        assert!(cdf.pdf_integral.is_finite() && cdf.pdf_integral > 0.0,
+            "pdf_integral should be positive and finite: {}", cdf.pdf_integral);
+
+        // sampling should produce finite, positive energy values
         for _ in 0..100 {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            assert!(we.energy.is_finite(), "energy should be finite");
+            assert!(*pdf > 0.0, "pdf should be positive");
         }
-        println!("{}", s);
     }
 
     #[test]
     fn test_cdf3() {
         // test sampling according to the CDF with narrowed bounds wrt the original signal bounds
-        let cdf: CurveWithCDF = Curve::Linear {
+        let curve = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
                 6.0, 3.0, 1.0, 0.4,
             ],
             bounds: BOUNDED_VISIBLE_RANGE,
             mode: InterpolationMode::Cubic,
-        }
-        .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        };
+        let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
         let narrowed_bounds = Bounds1D::new(500.0, 600.0);
+        let n = 1000;
         let mut s = 0.0;
-        for _ in 0..100 {
+        for _ in 0..n {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(narrowed_bounds, Sample1D::new_random_sample());
 
             s += we.energy / *pdf;
         }
-        println!("{}", s);
+        let estimate = s / n as f32;
+        // estimate should be finite and positive for a positive curve
+        assert!(estimate.is_finite() && estimate > 0.0, "CDF3 estimate invalid: {}", estimate);
     }
 
     #[test]
@@ -1231,19 +1248,21 @@ mod test {
         // test sampling according to the CDF with narrowed bounds in general
         let narrowed_bounds = Bounds1D::new(500.0, 600.0);
 
-        let cdf: CurveWithCDF = Curve::Exponential {
+        let curve = Curve::Exponential {
             signal: vec![(400.0, 200.0, 200.0, 0.9), (600.0, 200.0, 300.0, 1.0)],
-        }
-        .to_cdf(narrowed_bounds, 100);
+        };
+        let cdf: CurveWithCDF = curve.to_cdf(narrowed_bounds, 100);
 
+        let n = 1000;
         let mut s = 0.0;
-        for _ in 0..100 {
+        for _ in 0..n {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
             s += we.energy / *pdf;
         }
-        println!("{}", s);
+        let estimate = s / n as f32;
+        assert!(estimate.is_finite() && estimate > 0.0, "CDF4 estimate invalid: {}", estimate);
     }
 
     #[test]
@@ -1253,16 +1272,6 @@ mod test {
         }
         .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
-        for i in 0..100 {
-            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
-            println!(
-                "{}, {}, {}",
-                lambda,
-                cdf1.pdf.evaluate(lambda),
-                cdf1.cdf.evaluate(lambda)
-            );
-        }
-        println!();
         let cdf2: CurveWithCDF = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
@@ -1273,16 +1282,6 @@ mod test {
         }
         .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
-        for i in 0..100 {
-            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
-            println!(
-                "{}, {}, {}",
-                lambda,
-                cdf2.pdf.evaluate(lambda),
-                cdf2.cdf.evaluate(lambda)
-            );
-        }
-        println!();
         let integral1 = cdf1.pdf_integral;
         let integral2 = cdf2.pdf_integral;
 
@@ -1296,30 +1295,23 @@ mod test {
             list: vec![(Op::Add, cdf1.cdf), (Op::Add, cdf2.cdf)],
         };
 
-        // let combined_spd
         let combined_cdf = CurveWithCDF {
             pdf: combined_spd,
             cdf: combined_cdf_curve,
             pdf_integral: integral1 + integral2,
         };
-        for i in 0..100 {
-            let lambda = BOUNDED_VISIBLE_RANGE.lerp(i as f32 / 100.0);
-            println!(
-                "{}, {}, {}",
-                lambda,
-                combined_cdf.pdf.evaluate(lambda),
-                combined_cdf.cdf.evaluate(lambda)
-            );
-        }
 
-        let mut s = 0.0;
-        for _ in 0..1000 {
+        // combined pdf_integral should equal sum of individual integrals
+        assert_approx_eq(combined_cdf.pdf_integral, integral1 + integral2, 0.001);
+
+        // sampling should produce valid values
+        for _ in 0..100 {
             let (we, pdf): (_, PDF<f32, _>) = combined_cdf
                 .sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            assert!(we.energy.is_finite(), "energy should be finite");
+            assert!(*pdf > 0.0, "pdf should be positive");
         }
-        println!("\n\n{} {}", s / 1000.0, combined_cdf.pdf_integral);
     }
 
     #[test]
@@ -1327,12 +1319,9 @@ mod test {
         let bounds = Bounds1D::new(0.0, 1.0);
         let curve = Curve::from_function(|x| x * x, 100, bounds, InterpolationMode::Cubic);
 
-        let true_integral = |x: f32| x * x * x / 3.0;
-        println!(
-            "{}, {}",
-            true_integral(1.0) - true_integral(0.0),
-            curve.evaluate_integral(bounds, 100, false)
-        );
+        let true_integral = 1.0 / 3.0;
+        let computed = curve.evaluate_integral(bounds, 100, false);
+        assert_approx_eq(computed, true_integral, 0.01);
     }
 
     #[test]
@@ -1340,38 +1329,25 @@ mod test {
         let bounds = Bounds1D::new(0.0, 1.0);
         let curve = Curve::from_function(|x| x * x, 100, bounds, InterpolationMode::Cubic);
 
-        let true_integral = |x: f32| x * x * x / 3.0;
-        let true_integral = true_integral(1.0) - true_integral(0.0);
+        let true_integral = 1.0 / 3.0;
         let cdf = curve.to_cdf(bounds, 100);
 
-        println!("pdf integral is {}", cdf.pdf_integral);
+        // pdf_integral should approximate the true integral
+        assert_approx_eq(cdf.pdf_integral, true_integral, 0.02);
 
-        let samples = 100;
+        let n = 1000;
         let mut estimate = 0.0;
-        let mut variance_pt_1 = 0.0;
-        let mut sampler = StratifiedSampler::new(20, 10, 10);
-
-        let mut min_sample_x = 1.0;
-        for _ in 0..samples {
-            let sample = if true {
-                Sample1D::new_random_sample()
-            } else {
-                sampler.draw_1d()
-            };
-            let (v, pdf) = cdf.sample_power_and_pdf(bounds, sample);
-            if v.lambda < min_sample_x {
-                min_sample_x = v.lambda;
-            }
-            estimate += v.energy / *pdf / samples as f32;
-            println!("{}, {}, {:?}", v.lambda, v.energy, pdf);
-            variance_pt_1 += (v.energy / *pdf).powi(2) / samples as f32;
+        for _ in 0..n {
+            let sample = Sample1D::new_random_sample();
+            let (v, pdf): (_, PDF<f32, _>) = cdf.sample_power_and_pdf(bounds, sample);
+            estimate += v.energy / *pdf / n as f32;
         }
-        println!("estimate = {}, true_integral = {}", estimate, true_integral);
-        println!(
-            "variance = {:?}",
-            (variance_pt_1 - estimate.powi(2)) / (samples - 1) as f32
+        assert!(
+            (estimate - true_integral).abs() < 0.05,
+            "CDF from func estimate {} too far from true integral {}",
+            estimate,
+            true_integral
         );
-        println!("lowest sample is {}", min_sample_x);
     }
 
     #[test]

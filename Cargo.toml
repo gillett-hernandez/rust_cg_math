@@ -18,6 +18,7 @@ rayon = "~1.10"
 serde = { version = "~1.0", features = ["derive"], optional = true }
 deepsize = { version = "~0.2", optional = true }
 typenum = "1.18.0"
+# thermite = { git = "https://github.com/raygon-renderer/thermite" }
 
 [dev-dependencies]
 proptest = "1.10.0"

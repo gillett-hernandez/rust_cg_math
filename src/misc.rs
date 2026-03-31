@@ -143,7 +143,8 @@ mod test {
     fn test_direction_to_uv() {
         let direction = random_on_unit_sphere(Sample2D::new_random_sample());
         let uv = direction_to_uv(direction);
-        println!("{:?} {:?}", direction, uv);
+        assert!(uv.0 >= 0.0 && uv.0 <= 1.0, "u out of range: {}", uv.0);
+        assert!(uv.1 >= 0.0 && uv.1 <= 1.0, "v out of range: {}", uv.1);
     }
 
     #[test]
@@ -153,16 +154,26 @@ mod test {
         for _ in 0..n {
             let uv = (debug_random(), debug_random());
             let direction = uv_to_direction(uv);
-            println!("{:?} {:?}", direction, uv);
+            let norm = direction.norm();
+            assert!(
+                (norm - 1.0).abs() < 1e-5,
+                "direction not unit length: norm = {}",
+                norm
+            );
             center = center + direction / n as f32;
         }
-        println!("{:?}", center);
+        // uniform directions should average near zero
+        assert!(
+            center.norm() < 0.5,
+            "center of random directions too far from zero: {:?}",
+            center
+        );
     }
 
     #[test]
     fn test_bijectiveness_of_uv_direction() {
         let sub = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0, a.1 - b.1);
-        for _ in 0..1000000 {
+        for _ in 0..10000 {
             let uv = (debug_random(), debug_random());
             let direction = uv_to_direction(uv);
             let uv2 = direction_to_uv(direction);

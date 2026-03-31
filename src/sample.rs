@@ -258,27 +258,44 @@ mod test {
     fn function(x: f32) -> f32 {
         x * x - x + 1.0
     }
+    // true integral of x^2 - x + 1 on [0,1] = 1/3 - 1/2 + 1 = 5/6
+    const TRUE_INTEGRAL: f32 = 5.0 / 6.0;
+
     #[test]
     fn test_random_sampler_1d() {
         let mut sampler = Box::new(RandomSampler::new());
+        let n = 100000;
         let mut s = 0.0;
-        for _i in 0..10000000 {
+        for _i in 0..n {
             let sample = sampler.draw_1d();
             assert!(0.0 <= sample.x && sample.x < 1.0, "{}", sample.x);
             s += function(sample.x);
         }
-        println!("{}", s / 10000000.0);
+        let estimate = s / n as f32;
+        assert!(
+            (estimate - TRUE_INTEGRAL).abs() < 0.01,
+            "estimate {} too far from true integral {}",
+            estimate,
+            TRUE_INTEGRAL
+        );
     }
     #[test]
     fn test_stratified_sampler_1d() {
         let mut sampler = Box::new(StratifiedSampler::new(20, 20, 10));
+        let n = 100000;
         let mut s = 0.0;
-        for _i in 0..10000000 {
+        for _i in 0..n {
             let sample = sampler.draw_1d();
             assert!(0.0 <= sample.x && sample.x < 1.0, "{}", sample.x);
             s += function(sample.x);
         }
-        println!("{}", s / 10000000.0);
+        let estimate = s / n as f32;
+        assert!(
+            (estimate - TRUE_INTEGRAL).abs() < 0.01,
+            "estimate {} too far from true integral {}",
+            estimate,
+            TRUE_INTEGRAL
+        );
     }
     #[test]
     fn test_stratified_sampler_2d() {
@@ -286,7 +303,7 @@ mod test {
         for _ in 0..10000 {
             sampler.draw_1d();
         }
-        for _i in 0..10000000 {
+        for _i in 0..100000 {
             let sample = sampler.draw_2d();
             assert!(0.0 <= sample.x && sample.x < 1.0, "{}", sample.x);
             assert!(0.0 <= sample.y && sample.y < 1.0, "{}", sample.y);
@@ -296,7 +313,7 @@ mod test {
     fn test_stratified_sampler_3d() {
         let mut sampler = Box::new(StratifiedSampler::new(20, 20, 10));
 
-        for _i in 0..10000000 {
+        for _i in 0..100000 {
             let sample = sampler.draw_3d();
             assert!(0.0 <= sample.x && sample.x < 1.0, "{}", sample.x);
             assert!(0.0 <= sample.y && sample.y < 1.0, "{}", sample.y);

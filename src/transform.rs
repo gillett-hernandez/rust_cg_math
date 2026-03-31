@@ -408,25 +408,39 @@ mod tests {
         let transform_scale = Transform3::from_scale(Vec3::new(2.0, 2.0, 2.0));
 
         let test_vec = Vec3::new(1.0, 1.0, 1.0);
-        println!("testing vec {:?}", test_vec);
 
-        println!("{:?}", transform_translate.to_world(test_vec));
-        println!("{:?}", transform_rotate.to_world(test_vec));
-        println!("{:?}", transform_scale.to_world(test_vec));
+        // translation should not affect vectors
+        let translated_vec = transform_translate.to_world(test_vec);
+        assert!((translated_vec - test_vec).norm() < 1e-6, "translation should not affect vectors");
+
+        // rotation should preserve norm
+        let rotated_vec = transform_rotate.to_world(test_vec);
+        crate::assert_approx_eq(rotated_vec.norm(), test_vec.norm(), 1e-5);
+
+        // scale should multiply components
+        let scaled_vec = transform_scale.to_world(test_vec);
+        crate::assert_approx_eq(scaled_vec.norm(), test_vec.norm() * 2.0, 1e-5);
 
         let test_point = Point3::ORIGIN + test_vec;
-        println!("testing point {:?}", test_point);
 
-        println!("{:?}", transform_translate.to_world(test_point));
-        println!("{:?}", transform_rotate.to_world(test_point));
-        println!("{:?}", transform_scale.to_world(test_point));
+        // translation should shift point
+        let translated_point = transform_translate.to_world(test_point);
+        crate::assert_approx_eq(translated_point.x(), test_point.x() + 1.0, 1e-5);
+        crate::assert_approx_eq(translated_point.y(), test_point.y() + 2.0, 1e-5);
+
+        // rotation should preserve distance from origin
+        let rotated_point = transform_rotate.to_world(test_point);
+        crate::assert_approx_eq(
+            (rotated_point - Point3::ORIGIN).norm(),
+            (test_point - Point3::ORIGIN).norm(),
+            1e-5,
+        );
     }
 
     #[test]
     fn test_round_trip_error() {
         let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));
         let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
-        // let _transform_scale_uniform = Transform3::scale(Vec3::new(2.0, 2.0, 2.0));
         let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
 
         let trs = transform_translate * transform_rotate * transform_scale;
@@ -440,7 +454,6 @@ mod tests {
         let ts = transform_translate * transform_scale;
 
         let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
-        println!("testing vec {:?}", test_vec);
 
         let eval_round_trip_error_vec = |transform: Transform3, input: Vec3| {
             (transform.to_local(transform.to_world(input)) - input).norm()
@@ -449,35 +462,17 @@ mod tests {
             (transform.to_local(transform.to_world(input)) - input).norm()
         };
 
-        println!("vec trs, {:?}", eval_round_trip_error_vec(trs, test_vec));
-        println!("vec trs2, {:?}", eval_round_trip_error_vec(trs2, test_vec));
-        println!("vec  rs, {:?}", eval_round_trip_error_vec(rs, test_vec));
-        println!("vec  tr, {:?}", eval_round_trip_error_vec(tr, test_vec));
-        println!("vec  ts, {:?}", eval_round_trip_error_vec(ts, test_vec));
+        let tolerance = 1e-5;
+        for (name, transform) in [("trs", trs), ("trs2", trs2), ("rs", rs), ("tr", tr), ("ts", ts)] {
+            let err = eval_round_trip_error_vec(transform, test_vec);
+            assert!(err < tolerance, "vec round-trip error for {} = {}", name, err);
+        }
 
         let test_point = Point3::ORIGIN + test_vec;
-        println!("testing point {:?}", test_point);
-
-        println!(
-            "point trs, {:?}",
-            eval_round_trip_error_point(trs, test_point)
-        );
-        println!(
-            "point trs2, {:?}",
-            eval_round_trip_error_point(trs2, test_point)
-        );
-        println!(
-            "point  rs, {:?}",
-            eval_round_trip_error_point(rs, test_point)
-        );
-        println!(
-            "point  tr, {:?}",
-            eval_round_trip_error_point(tr, test_point)
-        );
-        println!(
-            "point  ts, {:?}",
-            eval_round_trip_error_point(ts, test_point)
-        );
+        for (name, transform) in [("trs", trs), ("trs2", trs2), ("rs", rs), ("tr", tr), ("ts", ts)] {
+            let err = eval_round_trip_error_point(transform, test_point);
+            assert!(err < tolerance, "point round-trip error for {} = {}", name, err);
+        }
     }
 
     #[test]
@@ -497,29 +492,26 @@ mod tests {
             reverse: _,
         } = combination_trs_2.clone();
         let redone = Transform3::new_from_matrix(forward.into()).unwrap();
-        let combination_rs = transform_rotate * transform_scale;
-        let combination_tr = transform_translate * transform_rotate;
-        let combination_ts = transform_translate * transform_scale;
 
         let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
-        println!("testing vec {:?}", test_vec);
 
-        println!("vec trs, {:?}", combination_trs.to_world(test_vec));
-        println!("vec trs_2, {:?}", combination_trs_2.to_world(test_vec));
-        println!("vec redone, {:?}", redone.to_world(test_vec));
-        println!("vec  rs, {:?}", combination_rs.to_world(test_vec));
-        println!("vec  tr, {:?}", combination_tr.to_world(test_vec));
-        println!("vec  ts, {:?}", combination_ts.to_world(test_vec));
+        // from_stack should match manual multiplication
+        let v1 = combination_trs.to_world(test_vec);
+        let v2 = combination_trs_2.to_world(test_vec);
+        assert!((v1 - v2).norm() < 1e-5, "from_stack vs mul mismatch for vec: {:?} vs {:?}", v1, v2);
+
+        // reconstructed from matrix should match
+        let v3 = redone.to_world(test_vec);
+        assert!((v1 - v3).norm() < 1e-5, "redone vs original mismatch for vec: {:?} vs {:?}", v1, v3);
 
         let test_point = Point3::ORIGIN + test_vec;
-        println!("testing point {:?}", test_point);
 
-        println!("point trs, {:?}", combination_trs.to_world(test_point));
-        println!("point trs_2, {:?}", combination_trs_2.to_world(test_point));
-        println!("point redone, {:?}", redone.to_world(test_point));
-        println!("point  rs, {:?}", combination_rs.to_world(test_point));
-        println!("point  tr, {:?}", combination_tr.to_world(test_point));
-        println!("point  ts, {:?}", combination_ts.to_world(test_point));
+        let p1 = combination_trs.to_world(test_point);
+        let p2 = combination_trs_2.to_world(test_point);
+        assert!((p1 - p2).norm() < 1e-5, "from_stack vs mul mismatch for point: {:?} vs {:?}", p1, p2);
+
+        let p3 = redone.to_world(test_point);
+        assert!((p1 - p3).norm() < 1e-5, "redone vs original mismatch for point: {:?} vs {:?}", p1, p3);
     }
 
     #[test]
@@ -534,27 +526,19 @@ mod tests {
             Some(transform_rotate),
             Some(transform_translate),
         );
-        let combination_rs = transform_rotate * transform_scale;
-        let combination_tr = transform_translate * transform_rotate;
-        let combination_ts = transform_translate * transform_scale;
 
         let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
-        println!("testing vec {:?}", test_vec);
 
-        println!("vec trs, {:?}", combination_trs.to_local(test_vec));
-        println!("vec trs_2, {:?}", combination_trs_2.to_local(test_vec));
-        println!("vec  rs, {:?}", combination_rs.to_local(test_vec));
-        println!("vec  tr, {:?}", combination_tr.to_local(test_vec));
-        println!("vec  ts, {:?}", combination_ts.to_local(test_vec));
+        // from_stack and manual mul should agree on to_local
+        let v1 = combination_trs.to_local(test_vec);
+        let v2 = combination_trs_2.to_local(test_vec);
+        assert!((v1 - v2).norm() < 1e-5, "to_local mismatch for vec: {:?} vs {:?}", v1, v2);
 
         let test_point = Point3::ORIGIN + test_vec;
-        println!("testing point {:?}", test_point);
 
-        println!("point trs, {:?}", combination_trs.to_local(test_point));
-        println!("point trs_2, {:?}", combination_trs_2.to_local(test_point));
-        println!("point  rs, {:?}", combination_rs.to_local(test_point));
-        println!("point  tr, {:?}", combination_tr.to_local(test_point));
-        println!("point  ts, {:?}", combination_ts.to_local(test_point));
+        let p1 = combination_trs.to_local(test_point);
+        let p2 = combination_trs_2.to_local(test_point);
+        assert!((p1 - p2).norm() < 1e-5, "to_local mismatch for point: {:?} vs {:?}", p1, p2);
     }
 
     #[test]
@@ -563,22 +547,31 @@ mod tests {
             nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(1.0, 2.0, 3.0));
 
         let matrix = Matrix4x4::from(n_translate);
-        let point = nalgebra::Vector4::new(1.0, 2.0, 3.0, 1.0);
         let simd_vec = Vec3(f32x4::from_array([1.0, 2.0, 3.0, 0.0]));
         let simd_point = Point3(f32x4::from_array([1.0, 2.0, 3.0, 1.0]));
 
         let transform = Transform3::new_from_matrix(n_translate).unwrap();
-        let result1 = n_translate * point;
-        let result2 = matrix * simd_vec;
-        let result3 = matrix * simd_point;
-        let result4 = transform.to_world(simd_vec);
-        let result5 = transform.to_local(simd_vec);
-        let result6 = transform.to_world(simd_point);
-        let result7 = transform.to_local(simd_point);
-        println!(
-            "{:?} {:?} {:?} {:?} {:?}",
-            result1, result2, result3, result4, result5
-        );
-        println!("{:?} {:?}", result6, result7);
+
+        // translation should not affect vectors
+        let result_vec = transform.to_world(simd_vec);
+        assert!((result_vec - simd_vec).norm() < 1e-6, "translation affected vector");
+
+        // matrix * vec should also not translate
+        let mat_vec = matrix * simd_vec;
+        assert!((mat_vec - simd_vec).norm() < 1e-6, "matrix translation affected vector");
+
+        // translation should shift point by (1,2,3)
+        let result_point = transform.to_world(simd_point);
+        crate::assert_approx_eq(result_point.x(), 2.0, 1e-5);
+        crate::assert_approx_eq(result_point.y(), 4.0, 1e-5);
+        crate::assert_approx_eq(result_point.z(), 6.0, 1e-5);
+
+        // matrix * point should match
+        let mat_point = matrix * simd_point;
+        assert!((result_point - mat_point).norm() < 1e-6, "transform vs matrix mismatch for point");
+
+        // round-trip: to_local(to_world(p)) should return original
+        let round_trip = transform.to_local(result_point);
+        assert!((round_trip - simd_point).norm() < 1e-5, "point round-trip failed");
     }
 }
