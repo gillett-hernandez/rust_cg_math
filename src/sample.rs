@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use rand::seq::SliceRandom;
-use rand::{thread_rng, RngCore};
+use rand::{Rng, rng};
 
 use std::f32::EPSILON;
 // TODO: add measure generic like with pdf to define what measure a sample is obtained wrt
@@ -93,13 +93,15 @@ impl Sampler for RandomSampler {
         Sample3D::new_random_sample()
     }
 }
+
+// TODO: update stratified sampler implementation to use less memory, or deprecate it and add a low discrepancy sequence instead. https://en.wikipedia.org/wiki/Low-discrepancy_sequence
 pub struct StratifiedSampler {
     pub dims: [usize; 3],
     pub indices: [usize; 3],
     pub first: Vec<usize>,
     pub second: Vec<usize>,
     pub third: Vec<usize>,
-    rng: Box<dyn RngCore>,
+    rng: Box<dyn Rng>,
 }
 
 impl StratifiedSampler {
@@ -110,7 +112,7 @@ impl StratifiedSampler {
             first: (0..xdim).into_iter().collect(),
             second: (0..(xdim * ydim)).into_iter().collect(),
             third: (0..(xdim * ydim * zdim)).into_iter().collect(),
-            rng: Box::new(thread_rng()),
+            rng: Box::new(rng()),
         }
     }
 }

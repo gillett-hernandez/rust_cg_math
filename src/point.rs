@@ -1,153 +1,198 @@
 use crate::prelude::*;
+use thermite::simd::Simd;
+use thermite::register::LinAlg3Register;
 
 use std::ops::{AddAssign, Sub, SubAssign};
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Point3(pub f32x4);
+/// 3D affine point, lane 3 held at 1.0. Generic over backend `S`.
+pub struct Point3<S: Simd>(pub Vector<S::f32x4>);
 
-impl Point3 {
-    pub const fn new(x: f32, y: f32, z: f32) -> Point3 {
-        Point3(f32x4::from_array([x, y, z, 1.0]))
+impl<S: Simd> Copy for Point3<S> {}
+impl<S: Simd> Clone for Point3<S> {
+    fn clone(&self) -> Self {
+        *self
     }
-    pub const ZERO: Point3 = Point3(f32x4::from_array([0.0, 0.0, 0.0, 1.0]));
-    pub const ORIGIN: Point3 = Point3(f32x4::from_array([0.0, 0.0, 0.0, 1.0]));
-    pub const INFINITY: Point3 = Point3(f32x4::from_array([INFINITY, INFINITY, INFINITY, 1.0]));
-    pub const NEG_INFINITY: Point3 =
-        Point3(f32x4::from_array([-INFINITY, -INFINITY, -INFINITY, 1.0]));
-    pub fn is_finite(&self) -> bool {
-        !(self.0.is_nan().any() || self.0.is_infinite().any())
+}
+impl<S: Simd> PartialEq for Point3<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl<S: Simd> std::fmt::Debug for Point3<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Point3")
+            .field(&self.x())
+            .field(&self.y())
+            .field(&self.z())
+            .finish()
     }
 }
 
-impl Point3 {
+impl<S: Simd> Point3<S> {
+    pub fn new(x: f32, y: f32, z: f32) -> Point3<S> {
+        Point3(Vector::<S::f32x4>::new([x, y, z, 1.0]))
+    }
+    pub fn origin() -> Point3<S> {
+        Point3::new(0.0, 0.0, 0.0)
+    }
+    pub fn zero() -> Point3<S> {
+        Point3::new(0.0, 0.0, 0.0)
+    }
+    pub fn infinity() -> Point3<S> {
+        Point3::new(INFINITY, INFINITY, INFINITY)
+    }
+    pub fn neg_infinity() -> Point3<S> {
+        Point3::new(-INFINITY, -INFINITY, -INFINITY)
+    }
+    pub fn is_finite(&self) -> bool {
+        let nan = <Vector<S::f32x4> as FloatVector>::is_nan(self.0);
+        let inf = <Vector<S::f32x4> as FloatVector>::is_infinite(self.0);
+        !(nan.any() || inf.any())
+    }
+}
+
+impl<S: Simd> Point3<S> {
     #[inline(always)]
     pub fn x(&self) -> f32 {
-        self.0[0]
+        self.0.extract::<0>()
     }
     #[inline(always)]
     pub fn y(&self) -> f32 {
-        self.0[1]
+        self.0.extract::<1>()
     }
     #[inline(always)]
     pub fn z(&self) -> f32 {
-        self.0[2]
+        self.0.extract::<2>()
     }
     #[inline(always)]
     pub fn w(&self) -> f32 {
-        self.0[3]
+        self.0.extract::<3>()
     }
+    /// Divide by w so the point is at w=1. No-op if already there.
     pub fn normalize(mut self) -> Self {
-        self.0 = self.0 / f32x4::splat(self.0[3]);
+        let w = self.w();
+        self.0 = self.0 / Vector::<S::f32x4>::splat(w);
         self
     }
     pub fn as_array(&self) -> [f32; 4] {
-        self.0.into()
+        [self.x(), self.y(), self.z(), self.w()]
     }
 }
 
-impl Default for Point3 {
+impl<S: Simd> Default for Point3<S> {
     fn default() -> Self {
-        Point3::ORIGIN
+        Point3::origin()
     }
 }
 
-impl Add<Vec3> for Point3 {
-    type Output = Point3;
-    fn add(self, other: Vec3) -> Point3 {
-        // Point3::new(self.x + other.x, self.y + other.y, self.z + other.z)
-        (self.0 + other.0).into()
+impl<S: Simd> Add<Vec3<S>> for Point3<S> {
+    type Output = Point3<S>;
+    fn add(self, other: Vec3<S>) -> Point3<S> {
+        Point3(self.0 + other.0)
     }
 }
 
-impl AddAssign<Vec3> for Point3 {
-    fn add_assign(&mut self, other: Vec3) {
-        // Point3::new(self.x + other.x, self.y + other.y, self.z + other.z)
-        self.0 += other.0
+impl<S: Simd> AddAssign<Vec3<S>> for Point3<S> {
+    fn add_assign(&mut self, other: Vec3<S>) {
+        self.0 += other.0;
     }
 }
 
-impl Sub<Vec3> for Point3 {
-    type Output = Point3;
-    fn sub(self, other: Vec3) -> Point3 {
-        // Point3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-        (self.0 - other.0).into()
+impl<S: Simd> Sub<Vec3<S>> for Point3<S> {
+    type Output = Point3<S>;
+    fn sub(self, other: Vec3<S>) -> Point3<S> {
+        Point3(self.0 - other.0)
     }
 }
 
-impl SubAssign<Vec3> for Point3 {
-    fn sub_assign(&mut self, other: Vec3) {
-        // Point3::new(self.x + other.x, self.y + other.y, self.z + other.z)
-        self.0 -= other.0
+impl<S: Simd> SubAssign<Vec3<S>> for Point3<S> {
+    fn sub_assign(&mut self, other: Vec3<S>) {
+        self.0 -= other.0;
     }
 }
 
-// // don't implement adding or subtracting floats from Point3, because that's equivalent to adding or subtracting a Vector with components f,f,f and why would you want to do that.
-
-impl Sub for Point3 {
-    type Output = Vec3;
-    fn sub(self, other: Point3) -> Vec3 {
-        // Vec3::new(self.x - other.x, self.y - other.y, self.z - other.z)
-        Vec3((self.0 - other.0) * f32x4::from_array([1.0, 1.0, 1.0, 0.0]))
+impl<S: Simd> Sub for Point3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    type Output = Vec3<S>;
+    fn sub(self, other: Point3<S>) -> Vec3<S> {
+        // Subtracting two w=1 points yields w=0 (vector). zero4() makes that
+        // explicit even if w lanes accumulated FP noise.
+        Vec3((self.0 - other.0).zero4())
     }
 }
 
-impl From<[f32; 3]> for Point3 {
-    fn from(other: [f32; 3]) -> Point3 {
+impl<S: Simd> From<[f32; 3]> for Point3<S> {
+    fn from(other: [f32; 3]) -> Point3<S> {
         Point3::new(other[0], other[1], other[2])
     }
 }
 
-impl From<f32x4> for Point3 {
-    fn from(other: f32x4) -> Point3 {
+impl<S: Simd> From<Vector<S::f32x4>> for Point3<S> {
+    fn from(other: Vector<S::f32x4>) -> Point3<S> {
         Point3(other)
     }
 }
 
-impl From<Vec3> for Point3 {
-    fn from(v: Vec3) -> Point3 {
-        // Point3::from_raw(v.0.replace(3, 1.0))
-        Point3::ORIGIN + v
-        // Point3::from_raw(v.0)
+impl<S: Simd> From<Vec3<S>> for Point3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    fn from(v: Vec3<S>) -> Point3<S> {
+        // Force lane 4 to 1.0.
+        Point3(v.0.one4())
+    }
+}
+
+impl<S: Simd> From<Point3<S>> for Vec3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    fn from(p: Point3<S>) -> Self {
+        // Drop the w lane.
+        Vec3(p.0.zero4())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vec::Vec3;
     use proptest::prelude::*;
 
-    fn arb_vec3() -> impl Strategy<Value = Vec3> {
-        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
-            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    type TestS = thermite::backend::scalar::Scalar;
+    type V3 = Vec3<TestS>;
+    type P3 = Point3<TestS>;
+
+    fn arb_vec3() -> impl Strategy<Value = V3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4).prop_map(|(x, y, z)| V3::new(x, y, z))
     }
 
-    fn arb_point3() -> impl Strategy<Value = Point3> {
-        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
-            .prop_map(|(x, y, z)| Point3::new(x, y, z))
+    fn arb_point3() -> impl Strategy<Value = P3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4).prop_map(|(x, y, z)| P3::new(x, y, z))
     }
 
     #[test]
     fn test_origin_equals_zero() {
-        assert_eq!(Point3::ORIGIN, Point3::ZERO);
-        assert_eq!(Point3::ORIGIN, Point3::new(0.0, 0.0, 0.0));
+        assert_eq!(P3::origin(), P3::zero());
+        assert_eq!(P3::origin(), P3::new(0.0, 0.0, 0.0));
     }
 
     #[test]
     fn test_default_is_origin() {
-        assert_eq!(Point3::default(), Point3::ORIGIN);
+        assert_eq!(P3::default(), P3::origin());
     }
 
     #[test]
     fn test_w_coordinate() {
-        let p = Point3::new(1.0, 2.0, 3.0);
+        let p = P3::new(1.0, 2.0, 3.0);
         assert_eq!(p.w(), 1.0);
     }
 
     proptest! {
         #[test]
         fn component_access(x in -1e4f32..1e4, y in -1e4f32..1e4, z in -1e4f32..1e4) {
-            let p = Point3::new(x, y, z);
+            let p = P3::new(x, y, z);
             prop_assert_eq!(p.x(), x);
             prop_assert_eq!(p.y(), y);
             prop_assert_eq!(p.z(), z);
@@ -156,8 +201,7 @@ mod tests {
 
         #[test]
         fn point_sub_point_is_vec(p1 in arb_point3(), p2 in arb_point3()) {
-            let v: Vec3 = p2 - p1;
-            // p1 + v should equal p2
+            let v: V3 = p2 - p1;
             let result = p1 + v;
             let diff = (result - p2).norm();
             prop_assert!(diff < 1e-2, "p1 + (p2 - p1) != p2, diff={}", diff);
@@ -179,7 +223,7 @@ mod tests {
 
         #[test]
         fn from_vec3_correctness(v in arb_vec3()) {
-            let p = Point3::from(v);
+            let p = P3::from(v);
             prop_assert!((p.x() - v.x()).abs() < 1e-6);
             prop_assert!((p.y() - v.y()).abs() < 1e-6);
             prop_assert!((p.z() - v.z()).abs() < 1e-6);
@@ -187,7 +231,7 @@ mod tests {
 
         #[test]
         fn from_array_correctness(x in -1e4f32..1e4, y in -1e4f32..1e4, z in -1e4f32..1e4) {
-            let p = Point3::from([x, y, z]);
+            let p = P3::from([x, y, z]);
             prop_assert_eq!(p.x(), x);
             prop_assert_eq!(p.y(), y);
             prop_assert_eq!(p.z(), z);
@@ -201,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_infinity_is_not_finite() {
-        assert!(!Point3::INFINITY.is_finite());
-        assert!(!Point3::NEG_INFINITY.is_finite());
+        assert!(!P3::infinity().is_finite());
+        assert!(!P3::neg_infinity().is_finite());
     }
 }

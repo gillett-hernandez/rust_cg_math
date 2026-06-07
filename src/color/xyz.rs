@@ -1,80 +1,100 @@
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul};
-use std::simd::f32x4;
 
-use crate::traits::Field;
-#[derive(Copy, Clone, Debug)]
-pub struct XYZColor(pub f32x4);
+use thermite::simd::Simd;
+use thermite::vector::{GenericVector, NumericVector};
+use thermite::Vector;
 
-impl XYZColor {
-    pub const fn new(x: f32, y: f32, z: f32) -> XYZColor {
-        // XYZColor { x, y, z, w: 0.0 }
-        XYZColor(f32x4::from_array([x, y, z, 0.0]))
+/// CIE XYZ tristimulus values stored in lanes 0..3 of an `f32x4`, lane 4 = 0.
+pub struct XYZColor<S: Simd>(pub Vector<S::f32x4>);
+
+impl<S: Simd> Copy for XYZColor<S> {}
+impl<S: Simd> Clone for XYZColor<S> {
+    fn clone(&self) -> Self {
+        *self
     }
-    pub const fn from_raw(v: f32x4) -> XYZColor {
-        XYZColor(v)
+}
+impl<S: Simd> std::fmt::Debug for XYZColor<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("XYZColor")
+            .field(&self.x())
+            .field(&self.y())
+            .field(&self.z())
+            .finish()
     }
-    pub const BLACK: XYZColor = XYZColor::from_raw(f32x4::ZERO);
-    pub const ZERO: XYZColor = XYZColor::from_raw(f32x4::ZERO);
 }
 
-impl XYZColor {
+impl<S: Simd> XYZColor<S> {
+    pub fn new(x: f32, y: f32, z: f32) -> XYZColor<S> {
+        XYZColor(Vector::<S::f32x4>::new([x, y, z, 0.0]))
+    }
+    pub fn from_raw(v: Vector<S::f32x4>) -> XYZColor<S> {
+        XYZColor(v)
+    }
+    pub fn black() -> XYZColor<S> {
+        XYZColor(<Vector<S::f32x4> as NumericVector>::ZERO)
+    }
+    pub fn zero() -> XYZColor<S> {
+        Self::black()
+    }
+}
+
+impl<S: Simd> XYZColor<S> {
     #[inline(always)]
     pub fn x(&self) -> f32 {
-        self.0[0]
+        self.0.extract::<0>()
     }
     #[inline(always)]
     pub fn y(&self) -> f32 {
-        self.0[1]
+        self.0.extract::<1>()
     }
     #[inline(always)]
     pub fn z(&self) -> f32 {
-        self.0[2]
+        self.0.extract::<2>()
     }
 }
 
-impl Mul<f32> for XYZColor {
-    type Output = XYZColor;
-    fn mul(self, other: f32) -> XYZColor {
-        XYZColor::from_raw(self.0 * f32x4::splat(other))
+impl<S: Simd> Mul<f32> for XYZColor<S> {
+    type Output = XYZColor<S>;
+    fn mul(self, other: f32) -> XYZColor<S> {
+        XYZColor::from_raw(self.0 * Vector::<S::f32x4>::splat(other))
     }
 }
 
-impl Mul<XYZColor> for f32 {
-    type Output = XYZColor;
-    fn mul(self, other: XYZColor) -> XYZColor {
-        XYZColor::from_raw(other.0 * f32x4::splat(self))
+impl<S: Simd> Mul<XYZColor<S>> for f32 {
+    type Output = XYZColor<S>;
+    fn mul(self, other: XYZColor<S>) -> XYZColor<S> {
+        other * self
     }
 }
 
-impl Div<f32> for XYZColor {
-    type Output = XYZColor;
-    fn div(self, other: f32) -> XYZColor {
-        XYZColor::from_raw(self.0 / f32x4::splat(other))
+impl<S: Simd> Div<f32> for XYZColor<S> {
+    type Output = XYZColor<S>;
+    fn div(self, other: f32) -> XYZColor<S> {
+        XYZColor::from_raw(self.0 / Vector::<S::f32x4>::splat(other))
     }
 }
 
-impl DivAssign<f32> for XYZColor {
+impl<S: Simd> DivAssign<f32> for XYZColor<S> {
     fn div_assign(&mut self, other: f32) {
-        self.0 = self.0 / f32x4::splat(other);
+        self.0 = self.0 / Vector::<S::f32x4>::splat(other);
     }
 }
 
-impl Add for XYZColor {
-    type Output = XYZColor;
-    fn add(self, other: XYZColor) -> XYZColor {
+impl<S: Simd> Add for XYZColor<S> {
+    type Output = XYZColor<S>;
+    fn add(self, other: XYZColor<S>) -> XYZColor<S> {
         XYZColor::from_raw(self.0 + other.0)
     }
 }
 
-impl AddAssign for XYZColor {
-    fn add_assign(&mut self, other: XYZColor) {
-        self.0 = self.0 + other.0
-        // self.0 = (*self + other).0
+impl<S: Simd> AddAssign for XYZColor<S> {
+    fn add_assign(&mut self, other: XYZColor<S>) {
+        self.0 = self.0 + other.0;
     }
 }
 
-impl From<XYZColor> for f32x4 {
-    fn from(v: XYZColor) -> f32x4 {
+impl<S: Simd> From<XYZColor<S>> for Vector<S::f32x4> {
+    fn from(v: XYZColor<S>) -> Vector<S::f32x4> {
         v.0
     }
 }
@@ -84,14 +104,16 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn arb_color() -> impl Strategy<Value = XYZColor> {
-        (0.0f32..10.0, 0.0f32..10.0, 0.0f32..10.0)
-            .prop_map(|(x, y, z)| XYZColor::new(x, y, z))
+    type TestS = thermite::backend::scalar::Scalar;
+    type C = XYZColor<TestS>;
+
+    fn arb_color() -> impl Strategy<Value = C> {
+        (0.0f32..10.0, 0.0f32..10.0, 0.0f32..10.0).prop_map(|(x, y, z)| C::new(x, y, z))
     }
 
     #[test]
     fn test_black_is_zero() {
-        let b = XYZColor::BLACK;
+        let b = C::black();
         assert_eq!(b.x(), 0.0);
         assert_eq!(b.y(), 0.0);
         assert_eq!(b.z(), 0.0);
@@ -99,8 +121,8 @@ mod tests {
 
     #[test]
     fn test_black_add_identity() {
-        let c = XYZColor::new(1.0, 2.0, 3.0);
-        let result = c + XYZColor::BLACK;
+        let c = C::new(1.0, 2.0, 3.0);
+        let result = c + C::black();
         assert_eq!(result.x(), c.x());
         assert_eq!(result.y(), c.y());
         assert_eq!(result.z(), c.z());
@@ -109,7 +131,7 @@ mod tests {
     proptest! {
         #[test]
         fn component_access(x in 0.0f32..10.0, y in 0.0f32..10.0, z in 0.0f32..10.0) {
-            let c = XYZColor::new(x, y, z);
+            let c = C::new(x, y, z);
             prop_assert_eq!(c.x(), x);
             prop_assert_eq!(c.y(), y);
             prop_assert_eq!(c.z(), z);

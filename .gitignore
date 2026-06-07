@@ -2,4 +2,6 @@ target/
 Cargo.lock
 .vscode/**
 CLAUDE.md
+.claude/**
+THERMITE_GUIDE.md
 api_spec.md

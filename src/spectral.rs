@@ -1,12 +1,14 @@
-use std::simd::Select;
-
 use crate::prelude::*;
+use thermite::math::TranscendentalMath;
 
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);
 pub const BOUNDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(380.0, 780.0);
 
 pub type SingleWavelength = WavelengthEnergy<f32, f32>;
-pub type HeroWavelength = WavelengthEnergy<f32x4, f32x4>;
+/// Hero wavelength bundle, parameterized by a thermite f32 float register `R`.
+/// Replaces the old `f32x4`-hardcoded alias — callers pick the width by
+/// choosing `R` (e.g. `<X86V3 as FloatSimd<f32>>::fxN` for native).
+pub type HeroWavelength<R> = WavelengthEnergy<Vector<R>, Vector<R>>;
 
 pub fn x_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 1.056, 5998.0, 379.0, 310.0)
@@ -24,24 +26,29 @@ pub fn z_bar(angstroms: f32) -> f32 {
         + gaussian(angstroms.into(), 0.681, 4590.0, 260.0, 138.0)) as f32
 }
 
-
-#[cfg(feature="simdfloat_patch")]
-pub fn x_bar_f32x4(angstroms: f32x4) -> f32x4 {
-    gaussian_f32x4(angstroms, 1.056, 5998.0, 379.0, 310.0)
-        + gaussian_f32x4(angstroms, 0.362, 4420.0, 160.0, 267.0)
-        + gaussian_f32x4(angstroms, -0.065, 5011.0, 204.0, 262.0)
+/// Vector form of the CIE X-bar observer fit. Generic across thermite f32
+/// float vectors. Replaces the simdfloat_patch-gated `x_bar_f32x4`.
+pub fn x_bar_v<V>(angstroms: V) -> V
+where
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    gaussian_v(angstroms, 1.056, 5998.0, 379.0, 310.0)
+        + gaussian_v(angstroms, 0.362, 4420.0, 160.0, 267.0)
+        + gaussian_v(angstroms, -0.065, 5011.0, 204.0, 262.0)
 }
 
-#[cfg(feature="simdfloat_patch")]
-pub fn y_bar_f32x4(angstroms: f32x4) -> f32x4 {
-    gaussian_f32x4(angstroms, 0.821, 5688.0, 469.0, 405.0)
-        + gaussian_f32x4(angstroms, 0.286, 5309.0, 163.0, 311.0)
+pub fn y_bar_v<V>(angstroms: V) -> V
+where
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    gaussian_v(angstroms, 0.821, 5688.0, 469.0, 405.0) + gaussian_v(angstroms, 0.286, 5309.0, 163.0, 311.0)
 }
 
-#[cfg(feature="simdfloat_patch")]
-pub fn z_bar_f32x4(angstroms: f32x4) -> f32x4 {
-    gaussian_f32x4(angstroms, 1.217, 4370.0, 118.0, 360.0)
-        + gaussian_f32x4(angstroms, 0.681, 4590.0, 260.0, 138.0)
+pub fn z_bar_v<V>(angstroms: V) -> V
+where
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    gaussian_v(angstroms, 1.217, 4370.0, 118.0, 360.0) + gaussian_v(angstroms, 0.681, 4590.0, 260.0, 138.0)
 }
 
 // traits
@@ -66,7 +73,7 @@ impl<L: Field, E: Field> WavelengthEnergy<L, E> {
     }
 }
 
-impl From<WavelengthEnergy<f32, f32>> for XYZColor {
+impl<S: thermite::simd::Simd> From<WavelengthEnergy<f32, f32>> for XYZColor<S> {
     fn from(we: WavelengthEnergy<f32, f32>) -> Self {
         let angstroms = we.lambda * 10.0;
         XYZColor::new(
@@ -77,14 +84,21 @@ impl From<WavelengthEnergy<f32, f32>> for XYZColor {
     }
 }
 
-#[cfg(feature="simdfloat_patch")]
-impl From<WavelengthEnergy<f32x4, f32x4>> for XYZColor {
-    fn from(we: WavelengthEnergy<f32x4, f32x4>) -> Self {
-        let angstroms = we.lambda * f32x4::splat(10.0);
+/// Generic SIMD -> XYZ conversion. Sums each spectral channel across lanes to
+/// produce scalar CIE XYZ tristimulus values. Replaces the simdfloat_patch-
+/// gated `From<WavelengthEnergy<f32x4, f32x4>> for XYZColor`.
+impl<R, S> From<WavelengthEnergy<Vector<R>, Vector<R>>> for XYZColor<S>
+where
+    R: thermite::register::FloatRegister<Element = f32>,
+    S: thermite::simd::Simd,
+    Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    fn from(we: WavelengthEnergy<Vector<R>, Vector<R>>) -> Self {
+        let angstroms = we.lambda * Vector::<R>::splat(10.0);
         XYZColor::new(
-            (we.energy * x_bar_f32x4(angstroms)).reduce_sum(),
-            (we.energy * y_bar_f32x4(angstroms)).reduce_sum(),
-            (we.energy * z_bar_f32x4(angstroms)).reduce_sum(),
+            (we.energy * x_bar_v(angstroms)).sum_elements(),
+            (we.energy * y_bar_v(angstroms)).sum_elements(),
+            (we.energy * z_bar_v(angstroms)).sum_elements(),
         )
     }
 }
@@ -98,17 +112,26 @@ impl WavelengthEnergyTrait<f32, f32> for WavelengthEnergy<f32, f32> {
     }
 }
 
-impl WavelengthEnergyTrait<f32x4, f32x4> for WavelengthEnergy<f32x4, f32x4> {
-    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<f32x4, f32x4> {
+/// Generic hero-wavelength sampling. Lays out `Vector::<R>::LANES` evenly-
+/// spaced wavelengths starting from `bounds.lower + sample * bounds.span()`,
+/// wrapping any past `bounds.upper` back into range. Replaces the old
+/// `f32x4`-hardcoded `new_from_range` and now scales to whatever width `R` is.
+impl<R> WavelengthEnergyTrait<Vector<R>, Vector<R>> for WavelengthEnergy<Vector<R>, Vector<R>>
+where
+    R: thermite::register::FloatRegister<Element = f32>,
+    Vector<R>: FloatVector<Element = f32>,
+{
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<Vector<R>, Vector<R>> {
+        let lanes = Vector::<R>::LANES as f32;
         let hero = sample * bounds.span();
-        let delta = bounds.span() / 4.0;
-        let mult = f32x4::from_array([0.0, 1.0, 2.0, 3.0]);
+        let delta = bounds.span() / lanes;
+        let mult = Vector::<R>::indexed();
         let wavelengths =
-            f32x4::splat(bounds.lower) + (f32x4::splat(hero) + mult * f32x4::splat(delta));
-        let sub: f32x4 = wavelengths
-            .simd_gt(f32x4::splat(bounds.upper))
-            .select(f32x4::splat(bounds.span()), f32x4::splat(0.0));
-        HeroWavelength::new(wavelengths - sub, f32x4::splat(0.0))
+            Vector::<R>::splat(bounds.lower) + (Vector::<R>::splat(hero) + mult * Vector::<R>::splat(delta));
+        let sub = wavelengths
+            .cmp_gt(Vector::<R>::splat(bounds.upper))
+            .select(Vector::<R>::splat(bounds.span()), Vector::<R>::splat(0.0));
+        HeroWavelength::new(wavelengths - sub, Vector::<R>::splat(0.0))
     }
 }
 
@@ -167,12 +190,15 @@ mod tests {
 
         #[test]
         fn hero_wavelength_all_in_range(sample in 0.001f32..0.999) {
+            // Use the scalar backend's 4-lane register for determinism + portability.
+            // Once Stage 3 lands a default-backend type alias, this can switch.
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
             let bounds = BOUNDED_VISIBLE_RANGE;
-            let we = HeroWavelength::new_from_range(sample, bounds);
-            for i in 0..4 {
-                let l = we.lambda[i];
+            let we = HeroWavelength::<TestR>::new_from_range(sample, bounds);
+            let arr = we.lambda.into_array();
+            for (i, l) in arr.iter().enumerate() {
                 prop_assert!(
-                    l >= bounds.lower && l <= bounds.upper,
+                    *l >= bounds.lower && *l <= bounds.upper,
                     "hero lambda[{}]={} not in [{}, {}]", i, l, bounds.lower, bounds.upper
                 );
             }
@@ -180,8 +206,9 @@ mod tests {
 
         #[test]
         fn wavelength_energy_to_xyz_positive_energy(lambda in 400.0f32..700.0, energy in 0.0f32..10.0) {
+            type TestS = thermite::backend::scalar::Scalar;
             let we = WavelengthEnergy { lambda, energy };
-            let xyz: XYZColor = we.into();
+            let xyz: XYZColor<TestS> = we.into();
             // with positive energy in the visible range, y should be non-negative
             prop_assert!(xyz.y() >= 0.0, "xyz.y={} for lambda={}, energy={}", xyz.y(), lambda, energy);
         }

@@ -7,8 +7,7 @@ use deepsize::DeepSizeOf;
 use ordered_float::OrderedFloat;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::simd::num::SimdUint;
-use std::simd::usizex4;
+use thermite::math::TranscendentalMath;
 
 const ONE_SUB_EPSILON: f32 = 1.0 - std::f32::EPSILON;
 
@@ -509,14 +508,14 @@ impl Curve {
             }
         }
     }
-    pub fn convert_to_xyz(
+    pub fn convert_to_xyz<S: thermite::simd::Simd>(
         &self,
         integration_bounds: Bounds1D,
         step_size: f32,
         clamped: bool,
-    ) -> XYZColor {
+    ) -> XYZColor<S> {
         let iterations = (integration_bounds.span() / step_size) as usize;
-        let mut sum: XYZColor = XYZColor::ZERO;
+        let mut sum: XYZColor<S> = XYZColor::black();
         for i in 0..iterations {
             let lambda = integration_bounds.lower + (i as f32) * step_size;
             let angstroms = lambda * 10.0;
@@ -525,12 +524,12 @@ impl Curve {
             } else {
                 self.evaluate_power(lambda)
             };
-            sum.0 += f32x4::from_array([
-                val * x_bar(angstroms),
-                val * y_bar(angstroms),
-                val * z_bar(angstroms),
-                0.0,
-            ]) * f32x4::splat(step_size);
+            sum = sum
+                + XYZColor::new(
+                    val * x_bar(angstroms),
+                    val * y_bar(angstroms),
+                    val * z_bar(angstroms),
+                ) * step_size;
         }
         sum
     }
@@ -560,121 +559,91 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
     }
 }
 
-#[cfg(feature = "simdfloat_patch")]
-impl SpectralPowerDistributionFunction<f32x4> for Curve {
-    fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
-        match &self {
-            Curve::Const(v) => f32x4::splat(v.max(0.0)),
-            Curve::Linear {
-                signal,
-                bounds,
-                mode,
-            } => {
-                use std::simd::Select;
-
-                let splatted_step_size = f32x4::splat(bounds.span() / (signal.len() as f32));
-                let index =
-                    ((lambda - f32x4::splat(bounds.lower)) / splatted_step_size).cast::<usize>();
-
-                let left = f32x4::gather_or_default(&signal, index);
-
-                let shifted = index + usizex4::splat(1);
-                let right =
-                    f32x4::gather_or(&signal, shifted, f32x4::splat(*signal.last().unwrap()));
-
-                let t = (lambda
-                    - (f32x4::splat(bounds.lower) + index.cast::<f32>() * splatted_step_size))
-                    / splatted_step_size;
-                // println!("t is {}", t);
-                match mode {
-                    InterpolationMode::Linear => (f32x4::splat(1.0) - t) * left + t * right,
-                    InterpolationMode::Nearest => t.simd_lt(f32x4::splat(0.5)).select(left, right),
-                    InterpolationMode::Cubic => {
-                        let t2 = f32x4::splat(2.0) * t;
-                        let one_sub_t = f32x4::splat(1.0) - t;
-                        let h00 = (f32x4::splat(1.0) + t2) * one_sub_t * one_sub_t;
-                        let h01 = t * t * (f32x4::splat(3.0) - t2);
-                        h00 * left + h01 * right
-                    }
-                }
-            }
-
+/// Generic SIMD evaluator for `Curve`. Replaces the simdfloat_patch-gated
+/// `SpectralPowerDistributionFunction<f32x4> for Curve` and works across any
+/// thermite f32 vector width.
+///
+/// `Linear`, `Tabulated`, and `Machine` fall back to a per-lane scalar map.
+/// The previous SIMD-vectorized `Linear` used `gather_or_default`, but gather
+/// is scalarized on most CPUs anyway, so the simpler `map` path is close to
+/// equivalent in practice. A thermite-`gather_or` path can be added later if
+/// profiling shows it matters.
+impl<R> SpectralPowerDistributionFunction<Vector<R>> for Curve
+where
+    R: thermite::register::FloatRegister<Element = f32>,
+    Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    fn evaluate_power(&self, lambda: Vector<R>) -> Vector<R> {
+        match self {
+            Curve::Const(v) => Vector::<R>::splat(v.max(0.0)),
             Curve::Polynomial {
                 domain_range_mapping,
                 coefficients,
             } => {
-                let [x0, xs, y0, ys]: [f32; 4] = (*domain_range_mapping).into();
+                let [x0, xs, y0, ys]: [f32; 4] = *domain_range_mapping;
                 debug_assert!(xs > 0.0);
 
-                let x = (lambda - f32x4::splat(x0)) / f32x4::splat(xs);
-
-                // TODO: optimize this more
-                let mut sum = f32x4::splat(y0);
-
-                // y offset takes care of the constant (x^0) term, so start with x rather than 1
+                let x = (lambda - Vector::<R>::splat(x0)) / Vector::<R>::splat(xs);
+                let mut sum = Vector::<R>::splat(y0);
                 let mut xpow = x;
-
                 for i in 0..8 {
-                    sum += f32x4::splat(coefficients[i]) * xpow;
+                    sum += Vector::<R>::splat(coefficients[i]) * xpow;
                     xpow *= x;
                 }
-
-                sum.max(f32x4::ZERO) * f32x4::splat(ys)
+                <Vector<R> as NumericVector>::max(sum, <Vector<R> as NumericVector>::ZERO) * Vector::<R>::splat(ys)
             }
-            Curve::Cauchy { a, b } => f32x4::splat(*a) + f32x4::splat(*b) / (lambda * lambda),
+            Curve::Cauchy { a, b } => {
+                Vector::<R>::splat(*a) + Vector::<R>::splat(*b) / (lambda * lambda)
+            }
             Curve::Exponential { signal } => {
-                let mut val = f32x4::splat(0.0);
+                let mut val = <Vector<R> as NumericVector>::ZERO;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
-                    val += gaussian_f32x4(lambda, multiplier, offset, sigma1, sigma2);
+                    val += gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
                 val
             }
             Curve::InverseExponential { signal } => {
-                let mut val = f32x4::splat(1.0);
+                let mut val = <Vector<R> as NumericVector>::ONE;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
-                    val -= gaussian_f32x4(lambda, multiplier, offset, sigma1, sigma2);
+                    val -= gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
-                val.max(f32x4::splat(0.0))
+                <Vector<R> as NumericVector>::max(val, <Vector<R> as NumericVector>::ZERO)
             }
-
             Curve::Blackbody { temperature, boost } => {
-                let bbd = blackbody_f32x4(*temperature, lambda);
+                let bbd = blackbody_v(*temperature, lambda);
                 if *boost == 0.0 {
                     bbd
                 } else {
-                    // renormalize blackbody spectra so that it's all between 0 and 1, then multiply by boost.
-                    f32x4::splat(*boost) * bbd
-                        / f32x4::splat(blackbody(*temperature, max_blackbody_lambda(*temperature)))
+                    Vector::<R>::splat(*boost) * bbd
+                        / Vector::<R>::splat(blackbody(
+                            *temperature,
+                            max_blackbody_lambda(*temperature),
+                        ))
                 }
             }
-            _ => f32x4::from_array([
-                self.evaluate(lambda[0]),
-                self.evaluate(lambda[1]),
-                self.evaluate(lambda[2]),
-                self.evaluate(lambda[3]),
-            ]),
+            // Linear / Tabulated / Machine: per-lane scalar fallback.
+            _ => lambda.map(|l| self.evaluate(l)),
         }
     }
 
-    fn evaluate_clamped(&self, lambda: f32x4) -> f32x4 {
-        self.evaluate_power(lambda)
-            .simd_clamp(f32x4::ZERO, f32x4::ONE)
+    fn evaluate_clamped(&self, lambda: Vector<R>) -> Vector<R> {
+        <Vector<R> as NumericVector>::clamp(
+            self.evaluate_power(lambda),
+            <Vector<R> as NumericVector>::ZERO,
+            <Vector<R> as NumericVector>::ONE,
+        )
     }
 
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (HeroWavelength, PDF<f32x4, Length>) {
-        match &self {
-            _ => {
-                let ws = HeroWavelength::new_from_range(sample.x, wavelength_range);
-                (
-                    ws.replace_energy(self.evaluate_power(ws.lambda)),
-                    PDF::new(f32x4::splat(1.0 / wavelength_range.span())), // uniform distribution
-                )
-            }
-        }
+    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
+        let ws = HeroWavelength::<R>::new_from_range(sample.x, wavelength_range);
+        (
+            ws.replace_energy(self.evaluate_power(ws.lambda)),
+            PDF::new(Vector::<R>::splat(1.0 / wavelength_range.span())),
+        )
     }
 }
 
@@ -785,24 +754,29 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
 
 // TODO: figure out how to use SMIS/CMIS for these sample functions, especially with CurveWithCDF
 
-#[cfg(feature = "simdfloat_patch")]
-impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
-    fn evaluate_power(&self, lambda: f32x4) -> f32x4 {
+/// Generic SIMD CDF sampler. Replaces the simdfloat_patch-gated
+/// `SpectralPowerDistributionFunction<f32x4> for CurveWithCDF`.
+impl<R> SpectralPowerDistributionFunction<Vector<R>> for CurveWithCDF
+where
+    R: thermite::register::FloatRegister<Element = f32>,
+    Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    fn evaluate_power(&self, lambda: Vector<R>) -> Vector<R> {
         self.pdf.evaluate_power(lambda)
     }
-    fn evaluate_clamped(&self, lambda: f32x4) -> f32x4 {
+    fn evaluate_clamped(&self, lambda: Vector<R>) -> Vector<R> {
         self.pdf.evaluate_clamped(lambda)
     }
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
         mut sample: Sample1D,
-    ) -> (HeroWavelength, PDF<f32x4, Length>) {
+    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
         match &self.cdf {
             Curve::Const(v) => (
-                HeroWavelength::new_from_range(sample.x, wavelength_range)
-                    .replace_energy(f32x4::splat(*v)),
-                f32x4::splat(1.0 / self.pdf_integral).into(),
+                HeroWavelength::<R>::new_from_range(sample.x, wavelength_range)
+                    .replace_energy(Vector::<R>::splat(*v)),
+                Vector::<R>::splat(1.0 / self.pdf_integral).into(),
             ),
             Curve::Linear {
                 signal,
@@ -810,15 +784,9 @@ impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
                 mode,
             } => {
                 let restricted_bounds = bounds.intersection(wavelength_range);
-                // remap sample.x to lie between the values that correspond to restricted_bounds.lower and restricted_bounds.upper
                 let lower_cdf_value = self.cdf.evaluate(restricted_bounds.lower);
                 let upper_cdf_value = self.cdf.evaluate(restricted_bounds.upper);
                 sample.x = lower_cdf_value + sample.x * (upper_cdf_value - lower_cdf_value);
-                // println!("{:?}", self.cdf);
-                // println!(
-                //     "remapped sample value to be {:?} which is between {:?} and {:?}",
-                //     sample.x, lower_cdf_value, upper_cdf_value
-                // );
                 let maybe_index = signal
                     .binary_search_by_key(&OrderedFloat::<f32>(sample.x), |&a| {
                         OrderedFloat::<f32>(a)
@@ -826,7 +794,6 @@ impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
                 let hero_lambda = match maybe_index {
                     Ok(index) | Err(index) => {
                         if index == 0 {
-                            // index is at end, so return lambda that corresponds to index
                             bounds.lower
                         } else {
                             let left = bounds.lower
@@ -865,18 +832,15 @@ impl SpectralPowerDistributionFunction<f32x4> for CurveWithCDF {
                         }
                     }
                 };
-                // println!("lambda was {}", lambda);
                 let correlated_sample_x = (hero_lambda - bounds.lower) / bounds.span();
-                let out_we = HeroWavelength::new_from_range(correlated_sample_x, *bounds);
-                let power: f32x4 = self.pdf.evaluate_power(out_we.lambda);
+                let out_we = HeroWavelength::<R>::new_from_range(correlated_sample_x, *bounds);
+                let power: Vector<R> = self.pdf.evaluate_power(out_we.lambda);
 
-                // println!("power was {}", power);
                 (
                     out_we.replace_energy(power),
-                    f32x4::splat(power[0] / self.pdf_integral).into(),
+                    Vector::<R>::splat(power.extract::<0>() / self.pdf_integral).into(),
                 )
             }
-            // should this be self.pdf.sample_power_and_pdf?
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
     }
@@ -1109,16 +1073,17 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "simdfloat_patch")]
     fn test_curve_polynomial() {
+        type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
         let curve = Curve::Polynomial {
             domain_range_mapping: [600.0, 200.0, 0.5, 0.06],
             coefficients: [-1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0],
         };
 
-        let result = curve.evaluate_power(f32x4::from_array([450.0, 550.0, 650.0, 750.0]));
-        for i in 0..4 {
-            assert!(result[i].is_finite(), "polynomial result[{}] is not finite", i);
+        let lambda = Vector::<TestR>::new([450.0_f32, 550.0, 650.0, 750.0]);
+        let result: Vector<TestR> = curve.evaluate_power(lambda);
+        for (i, l) in result.into_array().iter().enumerate() {
+            assert!(l.is_finite(), "polynomial result[{}] is not finite", i);
         }
     }
     #[test]
@@ -1351,8 +1316,8 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature = "simdfloat_patch")]
     fn test_cdf_sample_hwss() {
+        type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
         let cdf: CurveWithCDF = Curve::Linear {
             signal: vec![
                 0.1, 0.4, 0.9, 1.5, 0.9, 2.0, 1.0, 0.4, 0.6, 0.9, 0.4, 1.4, 1.9, 2.0, 5.0, 9.0,
@@ -1363,9 +1328,9 @@ mod test {
         }
         .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
-        let mut s = f32x4::ZERO;
+        let mut s = <Vector<TestR> as NumericVector>::ZERO;
         for _ in 0..100 {
-            let (we, pdf): (_, PDF<f32x4, _>) =
+            let (we, pdf): (_, PDF<Vector<TestR>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
             s += we.energy / *pdf;

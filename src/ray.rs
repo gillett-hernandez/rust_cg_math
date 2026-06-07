@@ -1,15 +1,33 @@
 use crate::prelude::*;
+use thermite::simd::Simd;
+use thermite::register::LinAlg3Register;
 
-#[derive(Copy, Clone, Debug)]
-pub struct Ray {
-    pub origin: Point3,
-    pub direction: Vec3,
+pub struct Ray<S: Simd> {
+    pub origin: Point3<S>,
+    pub direction: Vec3<S>,
     pub time: f32,
     pub tmax: f32,
 }
 
-impl Ray {
-    pub const fn new(origin: Point3, direction: Vec3) -> Self {
+impl<S: Simd> Copy for Ray<S> {}
+impl<S: Simd> Clone for Ray<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S: Simd> std::fmt::Debug for Ray<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ray")
+            .field("origin", &self.origin)
+            .field("direction", &self.direction)
+            .field("time", &self.time)
+            .field("tmax", &self.tmax)
+            .finish()
+    }
+}
+
+impl<S: Simd> Ray<S> {
+    pub const fn new(origin: Point3<S>, direction: Vec3<S>) -> Self {
         Ray {
             origin,
             direction,
@@ -18,7 +36,7 @@ impl Ray {
         }
     }
 
-    pub const fn new_with_time(origin: Point3, direction: Vec3, time: f32) -> Self {
+    pub const fn new_with_time(origin: Point3<S>, direction: Vec3<S>, time: f32) -> Self {
         Ray {
             origin,
             direction,
@@ -27,8 +45,8 @@ impl Ray {
         }
     }
     pub const fn new_with_time_and_tmax(
-        origin: Point3,
-        direction: Vec3,
+        origin: Point3<S>,
+        direction: Vec3<S>,
         time: f32,
         tmax: f32,
     ) -> Self {
@@ -43,16 +61,22 @@ impl Ray {
         self.tmax = tmax;
         self
     }
+}
+
+impl<S: Simd> Ray<S>
+where
+    S::f32x4: LinAlg3Register,
+{
     pub fn at_time(mut self, time: f32) -> Self {
         self.origin = self.point_at_parameter(time);
         self
     }
-    pub fn point_at_parameter(self, time: f32) -> Point3 {
+    pub fn point_at_parameter(self, time: f32) -> Point3<S> {
         self.origin + self.direction * time
     }
 }
 
-impl Default for Ray {
+impl<S: Simd> Default for Ray<S> {
     fn default() -> Self {
         Ray::new(Point3::default(), Vec3::default())
     }
@@ -63,25 +87,29 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn arb_vec3() -> impl Strategy<Value = Vec3> {
-        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
-            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    type TestS = thermite::backend::scalar::Scalar;
+    type V3 = Vec3<TestS>;
+    type P3 = Point3<TestS>;
+    type R = Ray<TestS>;
+
+    fn arb_vec3() -> impl Strategy<Value = V3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4).prop_map(|(x, y, z)| V3::new(x, y, z))
     }
 
-    fn arb_point3() -> impl Strategy<Value = Point3> {
-        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4)
-            .prop_map(|(x, y, z)| Point3::new(x, y, z))
+    fn arb_point3() -> impl Strategy<Value = P3> {
+        (-1e4f32..1e4, -1e4f32..1e4, -1e4f32..1e4).prop_map(|(x, y, z)| P3::new(x, y, z))
     }
 
-    fn arb_direction() -> impl Strategy<Value = Vec3> {
-        arb_vec3().prop_filter("nonzero", |v| v.norm() > 1e-6)
+    fn arb_direction() -> impl Strategy<Value = V3> {
+        arb_vec3()
+            .prop_filter("nonzero", |v| v.norm() > 1e-6)
             .prop_map(|v| v.normalized())
     }
 
     #[test]
     fn test_default_ray() {
-        let r = Ray::default();
-        assert_eq!(r.origin, Point3::default());
+        let r = R::default();
+        assert_eq!(r.origin, P3::default());
         assert_eq!(r.time, 0.0);
         assert_eq!(r.tmax, INFINITY);
     }
@@ -89,7 +117,7 @@ mod tests {
     proptest! {
         #[test]
         fn point_at_zero_is_origin(origin in arb_point3(), dir in arb_direction()) {
-            let ray = Ray::new(origin, dir);
+            let ray = R::new(origin, dir);
             let p = ray.point_at_parameter(0.0);
             let diff = (p - origin).norm();
             prop_assert!(diff < 1e-4, "ray(0) != origin, diff={}", diff);
@@ -101,7 +129,7 @@ mod tests {
             dir in arb_direction(),
             t in -100.0f32..100.0
         ) {
-            let ray = Ray::new(origin, dir);
+            let ray = R::new(origin, dir);
             let p = ray.point_at_parameter(t);
             let expected = origin + dir * t;
             let diff = (p - expected).norm();
@@ -115,7 +143,7 @@ mod tests {
             time in 0.0f32..10.0,
             tmax in 0.1f32..1000.0
         ) {
-            let ray = Ray::new_with_time(origin, dir, time).with_tmax(tmax);
+            let ray = R::new_with_time(origin, dir, time).with_tmax(tmax);
             prop_assert_eq!(ray.tmax, tmax);
             prop_assert_eq!(ray.time, time);
             let diff = (ray.origin - origin).norm();
@@ -128,7 +156,7 @@ mod tests {
             dir in arb_direction(),
             time in 0.0f32..10.0
         ) {
-            let ray = Ray::new_with_time(origin, dir, time);
+            let ray = R::new_with_time(origin, dir, time);
             prop_assert_eq!(ray.time, time);
             prop_assert_eq!(ray.tmax, INFINITY);
         }

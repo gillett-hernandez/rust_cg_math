@@ -1,4 +1,4 @@
-use typenum::{Add1, Unsigned};
+use typenum::Unsigned;
 
 use crate::spaces::{
     Circle, DirectionalSector, DiskSpace, Element, ProductSet, R, SimpleSet, SpaceParameterization,
@@ -6,13 +6,7 @@ use crate::spaces::{
 };
 
 use crate::prelude::*;
-use std::{
-    // arch::aarch64::float32x4x3_t,
-    cmp::Ordering,
-    fmt::Debug,
-    marker::PhantomData,
-    simd::f32x2,
-};
+use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
 // TODO: figure out if it's necessary to create a separate trait for the support of a measure,
 // i.e. R for Uniform01, or R^2 for Area, S^2 for Solid Angle, H+ for Projected Solid Angle, etc
@@ -429,28 +423,95 @@ impl FromScalar<f32> for f32 {
     }
 }
 
-#[cfg(feature = "simdfloat_patch")]
-pub trait SimdFloatPatch {
-    fn powf(self, other: Self) -> Self;
-}
+// ===========================================================================
+// Thermite bridge: blanket impls of our local traits over thermite's vector
+// traits, so any backend-chosen thermite vector type satisfies `Field` (and
+// thereby plugs into `WavelengthEnergy`, `PDF`, `Curve`, etc.) without us
+// having to write per-type impls.
+//
+// The concrete `f32x4` (std::simd) impls above are retained for now because
+// the public `HeroWavelength = WavelengthEnergy<f32x4, f32x4>` alias still
+// references std::simd::f32x4. Stage 2 of the thermite migration will swap
+// that alias to a thermite Vector and then those concrete impls become dead.
+// ===========================================================================
 
-#[cfg(feature = "simdfloat_patch")]
-impl SimdFloatPatch for f32x2 {
-    fn powf(mut self, power: f32x2) -> Self {
-        self[0] = self[0].powf(power[0]);
-        self[1] = self[1].powf(power[1]);
-        self
+// The blanket impls are written over `Vector<R>` (concrete type constructor) +
+// the relevant `*Register` bound, *not* over `V: FloatVector`. Coherence
+// otherwise rejects them — Rust can't prove `f32` will never grow a
+// `FloatVector` impl in a future thermite version, so `impl<V: FloatVector> X
+// for V` is treated as potentially overlapping with `impl X for f32`. Bounding
+// on `Vector<R>` is decidable: `f32` cannot be `Vector<R>` for any R.
+impl<R: thermite::register::SignedRegister> Abs for Vector<R> {
+    #[inline(always)]
+    fn abs(self) -> Self {
+        <Self as SignedVector>::abs(self)
     }
 }
 
-#[cfg(feature = "simdfloat_patch")]
-impl SimdFloatPatch for f32x4 {
-    fn powf(mut self, power: f32x4) -> Self {
-        self[0] = self[0].powf(power[0]);
-        self[1] = self[1].powf(power[1]);
-        self[2] = self[2].powf(power[2]);
-        self[3] = self[3].powf(power[3]);
-        self
+impl<R: thermite::register::FloatRegister> CheckNAN for Vector<R> {
+    fn check_nan(&self) -> CheckResult {
+        let mask = <Self as FloatVector>::is_nan(*self);
+        if mask.all() {
+            CheckResult::All
+        } else if mask.any() {
+            CheckResult::Some
+        } else {
+            CheckResult::None
+        }
+    }
+}
+
+impl<R: thermite::register::FloatRegister> CheckInf for Vector<R> {
+    fn check_inf(&self) -> CheckResult {
+        let mask = <Self as FloatVector>::is_infinite(*self);
+        if mask.all() {
+            CheckResult::All
+        } else if mask.any() {
+            CheckResult::Some
+        } else {
+            CheckResult::None
+        }
+    }
+}
+
+impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if *self == *other {
+            Some(Ordering::Equal)
+        } else if <Self as PartialOrdVector>::cmp_ge(*self, *other).all() {
+            Some(Ordering::Greater)
+        } else if <Self as PartialOrdVector>::cmp_le(*self, *other).all() {
+            Some(Ordering::Less)
+        } else {
+            None
+        }
+    }
+}
+
+impl<R: thermite::register::FloatRegister> Field for Vector<R> {
+    const ZERO: Self = <Self as NumericVector>::ZERO;
+    const ONE: Self = <Self as NumericVector>::ONE;
+    #[inline(always)]
+    fn min(&self, other: Self) -> Self {
+        <Self as NumericVector>::min(*self, other)
+    }
+    #[inline(always)]
+    fn max(&self, other: Self) -> Self {
+        <Self as NumericVector>::max(*self, other)
+    }
+}
+
+impl<R: thermite::register::FloatRegister<Element = f32>> ToScalar<f32> for Vector<R> {
+    #[inline(always)]
+    fn to_scalar(&self) -> f32 {
+        self.extract::<0>()
+    }
+}
+
+impl<R: thermite::register::FloatRegister<Element = f32>> FromScalar<f32> for Vector<R> {
+    #[inline(always)]
+    fn from_scalar(v: f32) -> Self {
+        Self::splat(v)
     }
 }
 
@@ -483,9 +544,11 @@ mod test {
 
     #[test]
     fn solidangle_measure() {
-        // let m = SolidAngle::<DirectionalSector>::default();
-        let e = Vec3::new(1.0, 1.0, 1.0).normalized();
-        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(e);
+        type TestS = thermite::backend::scalar::Scalar;
+        let e: Vec3<TestS> = Vec3::new(1.0, 1.0, 1.0).normalized();
+        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(e.as_array()[..3]
+            .try_into()
+            .unwrap());
         println!("d_mu is {}", d_mu);
 
         let uv = direction_to_uv(e);

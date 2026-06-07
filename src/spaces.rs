@@ -87,10 +87,10 @@ pub type SphericalCoordinatesBall = ProductSet<SphericalCoordinates, UnitInterva
 pub struct DirectionalSector;
 
 impl SpaceParameterization for DirectionalSector {
-    // funnily enough, space-filling non-overlapping sets composed of this look an awful lot like an apollonian gasket
-    // but on a sphere
-    type SimpleSet = (Vec3, f32);
-    // space is slightly redundant, as when the set span is PI, every direction represents the same subset
-    type Element = Vec3;
-    const SPACE: Self::SimpleSet = (Vec3::Z, PI);
+    // Directions are represented as raw `[f32; 3]` here rather than `Vec3<S>`
+    // to keep `SpaceParameterization` non-generic over a SIMD backend. Callers
+    // that want a `Vec3<S>` convert at the boundary.
+    type SimpleSet = ([f32; 3], f32);
+    type Element = [f32; 3];
+    const SPACE: Self::SimpleSet = ([0.0, 0.0, 1.0], PI);
 }

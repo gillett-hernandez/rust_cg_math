@@ -1,10 +1,13 @@
 use crate::prelude::*;
+use thermite::math::TranscendentalMath;
 
 pub fn power_heuristic(a: f32, b: f32) -> f32 {
     (a * a) / (a * a + b * b)
 }
 
-pub fn power_heuristic_hero(a: f32x4, b: f32x4) -> f32x4 {
+/// Vector form of `power_heuristic`. Replaces the old `power_heuristic_hero`
+/// (which was hardcoded to `f32x4`) — now generic across thermite vector widths.
+pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
     (a * a) / (a * a + b * b)
 }
 
@@ -16,19 +19,20 @@ pub fn gaussianf32(x: f32, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32
 pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
     let sqrt = (x - mu) / (if x < mu { sigma1 } else { sigma2 });
     alpha * (-(sqrt * sqrt) / 2.0).exp()
-
 }
 
-#[cfg(feature="simdfloat_patch")]
-pub fn gaussian_f32x4(x: f32x4, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32x4 {
-    use std::simd::Select;
-
-    let sqrt = (x - f32x4::splat(mu))
-        / x.simd_lt(f32x4::splat(mu))
-            .select(f32x4::splat(sigma1), f32x4::splat(sigma2));
-
-    f32x4::splat(alpha) * (-(sqrt * sqrt) / f32x4::splat(2.0)).exp()
-
+/// Vector form of `gaussianf32`. Generic over any thermite f32 float vector
+/// with transcendental support. Replaces the simdfloat_patch-gated
+/// `gaussian_f32x4`.
+pub fn gaussian_v<V>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
+where
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    let sigma = x
+        .cmp_lt(V::splat(mu))
+        .select(V::splat(sigma1), V::splat(sigma2));
+    let sqrt = (x - V::splat(mu)) / sigma;
+    V::splat(alpha) * (-(sqrt * sqrt) / V::splat(2.0)).exp()
 }
 
 pub fn w(x: f32, mul: f32, offset: f32, sigma: f32) -> f32 {
@@ -44,12 +48,15 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
     lambda.powi(-5) * HCC2 / ((HKC / (lambda * temperature)).exp() - 1.0)
 }
 
-#[cfg(feature="simdfloat_patch")]
-pub fn blackbody_f32x4(temperature: f32, lambda: f32x4) -> f32x4 {
-    let lambda = lambda * f32x4::splat(1e-9);
-
-    lambda.powf(f32x4::splat(-5.0)) * f32x4::splat(HCC2)
-        / ((f32x4::splat(HKC) / (lambda * f32x4::splat(temperature))).exp() - f32x4::splat(1.0))
+/// Vector form of `blackbody`. Replaces the simdfloat_patch-gated
+/// `blackbody_f32x4`; now works across thermite vector widths.
+pub fn blackbody_v<V>(temperature: f32, lambda: V) -> V
+where
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+{
+    let lambda = lambda * V::splat(1e-9);
+    lambda.powf(V::splat(-5.0)) * V::splat(HCC2)
+        / ((V::splat(HKC) / (lambda * V::splat(temperature))).exp() - V::splat(1.0))
 }
 
 pub fn max_blackbody_lambda(temp: f32) -> f32 {
@@ -60,7 +67,7 @@ pub fn max_blackbody_lambda(temp: f32) -> f32 {
 // theta = azimuthal angle
 // phi = inclination, i.e. angle measured from +Z. the elevation angle would be pi/2 - phi
 
-pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
+pub fn uv_to_direction<S: thermite::simd::Simd>(uv: (f32, f32)) -> Vec3<S> {
     let theta = (uv.0 - 0.5) * 2.0 * PI;
     let phi = uv.1 * PI;
 
@@ -71,7 +78,7 @@ pub fn uv_to_direction(uv: (f32, f32)) -> Vec3 {
     Vec3::new(x, y, z)
 }
 
-pub fn direction_to_uv(direction: Vec3) -> (f32, f32) {
+pub fn direction_to_uv<S: thermite::simd::Simd>(direction: Vec3<S>) -> (f32, f32) {
     let theta = direction.y().atan2(direction.x());
     let phi = direction.z().acos();
     let u = theta / 2.0 / PI + 0.5;
@@ -121,14 +128,14 @@ mod test {
 
         #[test]
         fn uv_to_direction_unit_length(u in 0.01f32..0.99, v in 0.01f32..0.99) {
-            let dir = uv_to_direction((u, v));
+            let dir: V3 = uv_to_direction((u, v));
             let n = dir.norm();
             prop_assert!((n - 1.0).abs() < 1e-4, "||dir||={}", n);
         }
 
         #[test]
         fn uv_direction_roundtrip(u in 0.01f32..0.99, v in 0.01f32..0.99) {
-            let dir = uv_to_direction((u, v));
+            let dir: V3 = uv_to_direction((u, v));
             let (u2, v2) = direction_to_uv(dir);
             let err_u = (u - u2).abs();
             let err_v = (v - v2).abs();
@@ -139,9 +146,12 @@ mod test {
         }
     }
 
+    type TestS = thermite::backend::scalar::Scalar;
+    type V3 = Vec3<TestS>;
+
     #[test]
     fn test_direction_to_uv() {
-        let direction = random_on_unit_sphere(Sample2D::new_random_sample());
+        let direction: V3 = random_on_unit_sphere(Sample2D::new_random_sample());
         let uv = direction_to_uv(direction);
         assert!(uv.0 >= 0.0 && uv.0 <= 1.0, "u out of range: {}", uv.0);
         assert!(uv.1 >= 0.0 && uv.1 <= 1.0, "v out of range: {}", uv.1);
@@ -149,11 +159,11 @@ mod test {
 
     #[test]
     fn test_uv_to_direction() {
-        let mut center = Vec3::ZERO;
+        let mut center = V3::ZERO;
         let n = 100;
         for _ in 0..n {
             let uv = (debug_random(), debug_random());
-            let direction = uv_to_direction(uv);
+            let direction: V3 = uv_to_direction(uv);
             let norm = direction.norm();
             assert!(
                 (norm - 1.0).abs() < 1e-5,
@@ -162,7 +172,6 @@ mod test {
             );
             center = center + direction / n as f32;
         }
-        // uniform directions should average near zero
         assert!(
             center.norm() < 0.5,
             "center of random directions too far from zero: {:?}",
@@ -175,7 +184,7 @@ mod test {
         let sub = |a: (f32, f32), b: (f32, f32)| (a.0 - b.0, a.1 - b.1);
         for _ in 0..10000 {
             let uv = (debug_random(), debug_random());
-            let direction = uv_to_direction(uv);
+            let direction: V3 = uv_to_direction(uv);
             let uv2 = direction_to_uv(direction);
             let abs_error = sub(uv, uv2);
             let round_trip_error = abs_error.0.hypot(abs_error.1);
@@ -191,9 +200,9 @@ mod test {
                 direction
             );
 
-            let direction = random_on_unit_sphere(Sample2D::new_random_sample());
+            let direction: V3 = random_on_unit_sphere(Sample2D::new_random_sample());
             let uv = direction_to_uv(direction);
-            let direction2 = uv_to_direction(uv);
+            let direction2: V3 = uv_to_direction(uv);
             let round_trip_error = (direction - direction2).norm();
             assert!(
                 round_trip_error < 0.0001,

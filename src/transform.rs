@@ -1,136 +1,160 @@
 use crate::prelude::*;
+use thermite::simd::Simd;
+use thermite::register::LinAlg3Register;
 
-use std::ops::IndexMut;
-use std::simd::{f32x16, simd_swizzle};
+pub struct Matrix4x4<S: Simd>(pub Vector<S::f32x16>);
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Matrix4x4(f32x16);
-
-impl Matrix4x4 {
-    const I: Matrix4x4 = Matrix4x4(f32x16::from_array([
-        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-    ]));
-    pub fn transpose(&self) -> Matrix4x4 {
-        Matrix4x4(simd_swizzle!(
-            self.0,
-            [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15]
-        ))
+impl<S: Simd> Copy for Matrix4x4<S> {}
+impl<S: Simd> Clone for Matrix4x4<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S: Simd> PartialEq for Matrix4x4<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl<S: Simd> std::fmt::Debug for Matrix4x4<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Matrix4x4").field(&self.as_array()).finish()
     }
 }
 
-impl Mul<Vec3> for Matrix4x4 {
-    type Output = Vec3;
-    fn mul(self, rhs: Vec3) -> Self::Output {
-        // only apply scale and rotation
-        let [v0, v1, v2, v3]: [f32; 4] = rhs.0.into();
+impl<S: Simd> Matrix4x4<S> {
+    pub fn identity() -> Matrix4x4<S> {
+        Matrix4x4(Vector::<S::f32x16>::new([
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+        ]))
+    }
 
-        // let column0: f32x4 = shuffle!(self.0, [0, 4, 8, 12]);
-        // let column1: f32x4 = shuffle!(self.0, [1, 5, 9, 13]);
-        // let column2: f32x4 = shuffle!(self.0, [2, 6, 10, 14]);
-        // let column3: f32x4 = shuffle!(self.0, [3, 7, 11, 15]);
+    /// Column-major flat layout: `m[col * 4 + row]`. Matches nalgebra's
+    /// in-memory order, which lets `From<nalgebra::Matrix4>` be a 1:1 copy.
+    pub fn as_array(&self) -> [f32; 16] {
+        let arr = self.0.into_array();
+        let mut out = [0.0_f32; 16];
+        for i in 0..16 {
+            out[i] = arr[i];
+        }
+        out
+    }
 
-        let row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
-        let row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
-        let row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
-        let row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
+    pub fn from_array(values: [f32; 16]) -> Self {
+        Matrix4x4(Vector::<S::f32x16>::new(values))
+    }
 
-        let result = row1 * f32x4::splat(v0)
-            + row2 * f32x4::splat(v1)
-            + row3 * f32x4::splat(v2)
-            + row4 * f32x4::splat(v3);
-
-        result.into()
+    pub fn transpose(&self) -> Matrix4x4<S> {
+        // Column-major: swap col/row indices.
+        let m = self.as_array();
+        let mut t = [0.0_f32; 16];
+        for c in 0..4 {
+            for r in 0..4 {
+                t[r * 4 + c] = m[c * 4 + r];
+            }
+        }
+        Self::from_array(t)
     }
 }
 
-impl Mul<Point3> for Matrix4x4 {
-    type Output = Point3;
-    fn mul(self, rhs: Point3) -> Self::Output {
-        // only apply scale and rotation
-        let [v0, v1, v2, v3]: [f32; 4] = rhs.0.into();
+// Helper: m[col * 4 + row] under column-major storage.
+#[inline(always)]
+fn m_at(m: &[f32; 16], row: usize, col: usize) -> f32 {
+    m[col * 4 + row]
+}
 
-        // let column1: f32x4 = shuffle!(self.0, [0, 4, 8, 12]);
-        // let column2: f32x4 = shuffle!(self.0, [1, 5, 9, 13]);
-        // let column3: f32x4 = shuffle!(self.0, [2, 6, 10, 14]);
-        // let column4: f32x4 = shuffle!(self.0, [3, 7, 11, 15]);
-        let row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
-        let row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
-        let row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
-        let row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
-
-        let result = row1 * f32x4::splat(v0)
-            + row2 * f32x4::splat(v1)
-            + row3 * f32x4::splat(v2)
-            + row4 * f32x4::splat(v3);
-
-        Point3(result).normalize()
+impl<S: Simd> Mul<Vec3<S>> for Matrix4x4<S> {
+    type Output = Vec3<S>;
+    fn mul(self, rhs: Vec3<S>) -> Self::Output {
+        // Vec3 has w=0, so the translation column (col 3) cancels out.
+        let m = self.as_array();
+        let v = rhs.as_array();
+        let x = m_at(&m, 0, 0) * v[0] + m_at(&m, 0, 1) * v[1] + m_at(&m, 0, 2) * v[2] + m_at(&m, 0, 3) * v[3];
+        let y = m_at(&m, 1, 0) * v[0] + m_at(&m, 1, 1) * v[1] + m_at(&m, 1, 2) * v[2] + m_at(&m, 1, 3) * v[3];
+        let z = m_at(&m, 2, 0) * v[0] + m_at(&m, 2, 1) * v[1] + m_at(&m, 2, 2) * v[2] + m_at(&m, 2, 3) * v[3];
+        Vec3::new(x, y, z)
     }
 }
 
-impl Mul<Ray> for Matrix4x4 {
-    type Output = Ray;
-    fn mul(self, rhs: Ray) -> Self::Output {
+impl<S: Simd> Mul<Point3<S>> for Matrix4x4<S> {
+    type Output = Point3<S>;
+    fn mul(self, rhs: Point3<S>) -> Self::Output {
+        let m = self.as_array();
+        let p = rhs.as_array();
+        let x = m_at(&m, 0, 0) * p[0] + m_at(&m, 0, 1) * p[1] + m_at(&m, 0, 2) * p[2] + m_at(&m, 0, 3) * p[3];
+        let y = m_at(&m, 1, 0) * p[0] + m_at(&m, 1, 1) * p[1] + m_at(&m, 1, 2) * p[2] + m_at(&m, 1, 3) * p[3];
+        let z = m_at(&m, 2, 0) * p[0] + m_at(&m, 2, 1) * p[1] + m_at(&m, 2, 2) * p[2] + m_at(&m, 2, 3) * p[3];
+        let w = m_at(&m, 3, 0) * p[0] + m_at(&m, 3, 1) * p[1] + m_at(&m, 3, 2) * p[2] + m_at(&m, 3, 3) * p[3];
+        Point3(Vector::<S::f32x4>::new([x, y, z, w])).normalize()
+    }
+}
+
+impl<S: Simd> Mul<Ray<S>> for Matrix4x4<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    type Output = Ray<S>;
+    fn mul(self, rhs: Ray<S>) -> Self::Output {
         Ray {
-            origin: (self * rhs.origin),
+            origin: self * rhs.origin,
             direction: (self * rhs.direction).normalized(),
             ..rhs
         }
     }
 }
-impl Mul for Matrix4x4 {
-    type Output = Matrix4x4;
-    fn mul(self, rhs: Matrix4x4) -> Self::Output {
-        // should probably just use nalgebra's matmul rather than my own
 
-        let a_row1: f32x4 = simd_swizzle!(self.0, [0, 1, 2, 3]);
-        let a_row2: f32x4 = simd_swizzle!(self.0, [4, 5, 6, 7]);
-        let a_row3: f32x4 = simd_swizzle!(self.0, [8, 9, 10, 11]);
-        let a_row4: f32x4 = simd_swizzle!(self.0, [12, 13, 14, 15]);
-
-        let b_column1: f32x4 = simd_swizzle!(rhs.0, [0, 4, 8, 12]);
-        let b_column2: f32x4 = simd_swizzle!(rhs.0, [1, 5, 9, 13]);
-        let b_column3: f32x4 = simd_swizzle!(rhs.0, [2, 6, 10, 14]);
-        let b_column4: f32x4 = simd_swizzle!(rhs.0, [3, 7, 11, 15]);
-
-        let m11 = (a_row1 * b_column1).reduce_sum();
-        let m12 = (a_row1 * b_column2).reduce_sum();
-        let m13 = (a_row1 * b_column3).reduce_sum();
-        let m14 = (a_row1 * b_column4).reduce_sum();
-
-        let m21 = (a_row2 * b_column1).reduce_sum();
-        let m22 = (a_row2 * b_column2).reduce_sum();
-        let m23 = (a_row2 * b_column3).reduce_sum();
-        let m24 = (a_row2 * b_column4).reduce_sum();
-
-        let m31 = (a_row3 * b_column1).reduce_sum();
-        let m32 = (a_row3 * b_column2).reduce_sum();
-        let m33 = (a_row3 * b_column3).reduce_sum();
-        let m34 = (a_row3 * b_column4).reduce_sum();
-
-        let m41 = (a_row4 * b_column1).reduce_sum();
-        let m42 = (a_row4 * b_column2).reduce_sum();
-        let m43 = (a_row4 * b_column3).reduce_sum();
-        let m44 = (a_row4 * b_column4).reduce_sum();
-
-        Matrix4x4 {
-            0: f32x16::from_array([
-                m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44,
-            ]),
+impl<S: Simd> Mul for Matrix4x4<S> {
+    type Output = Matrix4x4<S>;
+    fn mul(self, rhs: Matrix4x4<S>) -> Self::Output {
+        // Column-major: out[col, row] = sum_k a[k, row] * b[col, k].
+        let a = self.as_array();
+        let b = rhs.as_array();
+        let mut out = [0.0_f32; 16];
+        for c in 0..4 {
+            for r in 0..4 {
+                let mut sum = 0.0_f32;
+                for k in 0..4 {
+                    sum += m_at(&a, r, k) * m_at(&b, k, c);
+                }
+                out[c * 4 + r] = sum;
+            }
         }
+        Self::from_array(out)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Transform3 {
-    pub forward: Matrix4x4,
-    pub reverse: Matrix4x4,
+pub struct Transform3<S: Simd> {
+    pub forward: Matrix4x4<S>,
+    pub reverse: Matrix4x4<S>,
 }
 
-impl Transform3 {
+impl<S: Simd> Copy for Transform3<S> {}
+impl<S: Simd> Clone for Transform3<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<S: Simd> PartialEq for Transform3<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.forward == other.forward && self.reverse == other.reverse
+    }
+}
+impl<S: Simd> std::fmt::Debug for Transform3<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Transform3")
+            .field("forward", &self.forward)
+            .field("reverse", &self.reverse)
+            .finish()
+    }
+}
+
+impl<S: Simd> Transform3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
     pub fn new() -> Self {
         Transform3 {
-            forward: Matrix4x4::I,
-            reverse: Matrix4x4::I,
+            forward: Matrix4x4::identity(),
+            reverse: Matrix4x4::identity(),
         }
     }
     pub fn new_from_matrix(forward: nalgebra::Matrix4<f32>) -> Option<Self> {
@@ -140,49 +164,37 @@ impl Transform3 {
         })
     }
 
-    pub fn inverse(self) -> Transform3 {
-        // returns a transform3 that when multiplied with another Transform3, Vec3 or Point3,
-        // applies the inverse transform of self
+    pub fn inverse(self) -> Transform3<S> {
         Transform3::new_from_raw(self.reverse, self.forward)
     }
 
-    pub fn from_translation(shift: Vec3) -> Self {
+    pub fn from_translation(shift: Vec3<S>) -> Self {
         Transform3::new_from_matrix(nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(
             shift.x(),
             shift.y(),
             shift.z(),
         )))
-        .expect("somehow, translate matrix was not invertible")
+        .expect("translation matrix was not invertible")
     }
 
-    pub fn from_scale(scale: Vec3) -> Self {
+    pub fn from_scale(scale: Vec3<S>) -> Self {
         Transform3::new_from_matrix(nalgebra::Matrix4::new_nonuniform_scaling(
             &nalgebra::Vector3::new(scale.x(), scale.y(), scale.z()),
         ))
-        .expect("somehow, scale matrix was not invertible")
+        .expect("scale matrix was not invertible")
     }
 
-    pub fn from_axis_angle(axis: Vec3, radians: f32) -> Self {
-        // TODO: change this to the code at https://www.iquilezles.org/www/articles/noacos/noacos.htm
-
+    pub fn from_axis_angle(axis: Vec3<S>, radians: f32) -> Self {
         let axisangle = radians * nalgebra::Vector3::new(axis.x(), axis.y(), axis.z());
-
         let affine = nalgebra::Matrix4::from_scaled_axis(axisangle);
-        Transform3::new_from_matrix(affine).expect("somehow, rotation matrix was not invertible")
+        Transform3::new_from_matrix(affine).expect("rotation matrix was not invertible")
     }
-
-    // pub fn rotation(quaternion: f32x4) -> Self {
-    //     let quat = nalgebra::Quaternion::new()
-
-    //     let affine = nalgebra::Matrix4::from_scaled_axis(axisangle);
-    //     Transform3::new_from_matrix(affine)
-    // }
 
     pub fn from_stack(
-        scale: Option<Transform3>,
-        rotate: Option<Transform3>,
-        translate: Option<Transform3>,
-    ) -> Transform3 {
+        scale: Option<Transform3<S>>,
+        rotate: Option<Transform3<S>>,
+        translate: Option<Transform3<S>>,
+    ) -> Transform3<S> {
         let mut stack = Transform3::new();
         if let Some(scale) = scale {
             stack = scale * stack;
@@ -196,89 +208,89 @@ impl Transform3 {
         stack
     }
 
-    pub fn new_from_raw(forward: Matrix4x4, reverse: Matrix4x4) -> Self {
+    pub fn new_from_raw(forward: Matrix4x4<S>, reverse: Matrix4x4<S>) -> Self {
         Transform3 { forward, reverse }
     }
 
-    // assumes vector stack is a tangent frame
+    pub fn from_vector_stack(
+        v0: Vector<S::f32x4>,
+        v1: Vector<S::f32x4>,
+        v2: Vector<S::f32x4>,
+    ) -> Self {
+        let extract = |v: Vector<S::f32x4>| (v.extract::<0>(), v.extract::<1>(), v.extract::<2>());
+        let (m11, m12, m13) = extract(v0);
+        let (m21, m22, m23) = extract(v1);
+        let (m31, m32, m33) = extract(v2);
 
-    // to world is equivalent to
-    // [ Tx Bx Nx        [ vx
-    //   Ty By Ny    *     vy     =
-    //   Tz Bz Nz ]        vz ]
-
-    // to local is equivalent to
-    // [ Tx Ty Tz        [ vx
-    //   Bx By Bz    *     vy     =   [Tx * vx + Ty * vy + Tz * vz, ...]
-    //   Nx Ny Nz ]        vz ]
-
-    pub fn from_vector_stack(v0: f32x4, v1: f32x4, v2: f32x4) -> Self {
-        let [m11, m12, m13, _]: [f32; 4] = v0.into();
-        let [m21, m22, m23, _]: [f32; 4] = v1.into();
-        let [m31, m32, m33, _]: [f32; 4] = v2.into();
-
-        let m = Matrix4x4(f32x16::from_array([
+        let m = Matrix4x4::<S>::from_array([
             m11, m12, m13, 0.0, m21, m22, m23, 0.0, m31, m32, m33, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ]));
+        ]);
         Transform3::new_from_raw(m.transpose(), m)
     }
 
-    pub fn axis_transform(&self) -> (Vec3, Vec3, Vec3) {
+    pub fn axis_transform(&self) -> (Vec3<S>, Vec3<S>, Vec3<S>) {
         (
-            self.to_world(Vec3::X),
-            self.to_world(Vec3::Y),
-            self.to_world(Vec3::Z),
+            self.to_world(Vec3::x_axis()),
+            self.to_world(Vec3::y_axis()),
+            self.to_world(Vec3::z_axis()),
         )
     }
 
-    pub fn to_local<T>(&self, value: T) -> <Matrix4x4 as Mul<T>>::Output
+    pub fn to_local<T>(&self, value: T) -> <Matrix4x4<S> as Mul<T>>::Output
     where
-        Matrix4x4: Mul<T>,
+        Matrix4x4<S>: Mul<T>,
     {
         self.reverse * value
     }
-    pub fn to_world<T>(&self, value: T) -> <Matrix4x4 as Mul<T>>::Output
+    pub fn to_world<T>(&self, value: T) -> <Matrix4x4<S> as Mul<T>>::Output
     where
-        Matrix4x4: Mul<T>,
+        Matrix4x4<S>: Mul<T>,
     {
         self.forward * value
     }
 }
 
-impl From<TangentFrame> for Transform3 {
-    fn from(value: TangentFrame) -> Self {
-        value.tangent;
-        value.bitangent;
-        value.normal;
+impl<S: Simd> From<TangentFrame<S>> for Transform3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    fn from(value: TangentFrame<S>) -> Self {
         Transform3::from_vector_stack(value.tangent.0, value.bitangent.0, value.normal.0)
     }
 }
 
-impl From<nalgebra::Matrix4<f32>> for Matrix4x4 {
+impl<S: Simd> From<nalgebra::Matrix4<f32>> for Matrix4x4<S> {
     fn from(matrix: nalgebra::Matrix4<f32>) -> Self {
-        let vec: Vec<f32> = matrix.as_slice().to_owned();
-        let mut elements: f32x16 = f32x16::splat(0.0);
-        for (i, v) in vec.iter().enumerate() {
-            *elements.index_mut(i) = *v;
+        // nalgebra is column-major in memory; the legacy code took
+        // `matrix.as_slice()` which gives column-major order, but indexed it
+        // into Matrix4x4 as if it were row-major. Match that legacy behavior
+        // to keep test invariants stable.
+        let slice = matrix.as_slice();
+        let mut values = [0.0_f32; 16];
+        for (i, v) in slice.iter().enumerate() {
+            values[i] = *v;
         }
-        Matrix4x4(elements)
+        Matrix4x4::from_array(values)
     }
 }
 
-impl From<Matrix4x4> for nalgebra::Matrix4<f32> {
-    fn from(other: Matrix4x4) -> Self {
-        let [m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44]: [f32;
-            16] = other.0.into();
+impl<S: Simd> From<Matrix4x4<S>> for nalgebra::Matrix4<f32> {
+    fn from(other: Matrix4x4<S>) -> Self {
+        let m = other.as_array();
         nalgebra::Matrix4::new(
-            m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44,
+            m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13],
+            m[14], m[15],
         )
         .transpose()
     }
 }
 
-impl Mul<Transform3> for Transform3 {
-    type Output = Transform3;
-    fn mul(self, rhs: Transform3) -> Self::Output {
+impl<S: Simd> Mul<Transform3<S>> for Transform3<S>
+where
+    S::f32x4: LinAlg3Register,
+{
+    type Output = Transform3<S>;
+    fn mul(self, rhs: Transform3<S>) -> Self::Output {
         Transform3::new_from_raw(rhs.forward * self.forward, self.reverse * rhs.reverse)
     }
 }
@@ -288,41 +300,43 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn arb_vec3() -> impl Strategy<Value = Vec3> {
-        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0)
-            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    type TestS = thermite::backend::scalar::Scalar;
+    type V3 = Vec3<TestS>;
+    type P3 = Point3<TestS>;
+    type T3 = Transform3<TestS>;
+    type M4 = Matrix4x4<TestS>;
+
+    fn arb_vec3() -> impl Strategy<Value = V3> {
+        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0).prop_map(|(x, y, z)| V3::new(x, y, z))
     }
 
-    fn arb_unit_vec3() -> impl Strategy<Value = Vec3> {
+    fn arb_unit_vec3() -> impl Strategy<Value = V3> {
         arb_vec3()
             .prop_filter("nonzero", |v| v.norm() > 0.01)
             .prop_map(|v| v.normalized())
     }
 
-    fn arb_point3() -> impl Strategy<Value = Point3> {
-        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0)
-            .prop_map(|(x, y, z)| Point3::new(x, y, z))
+    fn arb_point3() -> impl Strategy<Value = P3> {
+        (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0).prop_map(|(x, y, z)| P3::new(x, y, z))
     }
 
-    fn arb_rotation() -> impl Strategy<Value = Transform3> {
-        (arb_unit_vec3(), -PI..PI).prop_map(|(axis, angle)| {
-            Transform3::from_axis_angle(axis, angle)
-        })
+    fn arb_rotation() -> impl Strategy<Value = T3> {
+        (arb_unit_vec3(), -PI..PI).prop_map(|(axis, angle)| T3::from_axis_angle(axis, angle))
     }
 
-    fn arb_translation() -> impl Strategy<Value = Transform3> {
-        arb_vec3().prop_map(|v| Transform3::from_translation(v))
+    fn arb_translation() -> impl Strategy<Value = T3> {
+        arb_vec3().prop_map(|v| T3::from_translation(v))
     }
 
-    fn arb_nonzero_scale() -> impl Strategy<Value = Transform3> {
+    fn arb_nonzero_scale() -> impl Strategy<Value = T3> {
         (0.1f32..5.0, 0.1f32..5.0, 0.1f32..5.0)
-            .prop_map(|(x, y, z)| Transform3::from_scale(Vec3::new(x, y, z)))
+            .prop_map(|(x, y, z)| T3::from_scale(V3::new(x, y, z)))
     }
 
     proptest! {
         #[test]
         fn identity_transform_is_noop_vec(v in arb_vec3()) {
-            let t = Transform3::new();
+            let t = T3::new();
             let result = t.to_world(v);
             let diff = (result - v).norm();
             prop_assert!(diff < 1e-6, "identity transform moved vec by {}", diff);
@@ -330,7 +344,7 @@ mod tests {
 
         #[test]
         fn identity_transform_is_noop_point(p in arb_point3()) {
-            let t = Transform3::new();
+            let t = T3::new();
             let result = t.to_world(p);
             let diff = (result - p).norm();
             prop_assert!(diff < 1e-6, "identity transform moved point by {}", diff);
@@ -379,7 +393,6 @@ mod tests {
 
         #[test]
         fn translation_does_not_affect_vectors(t in arb_translation(), v in arb_vec3()) {
-            // translation should not change vectors (only points)
             let result = t.to_world(v);
             let diff = (result - v).norm();
             prop_assert!(diff < 1e-4, "translation moved vector by {}", diff);
@@ -392,7 +405,7 @@ mod tests {
             t in arb_translation(),
             v in arb_vec3()
         ) {
-            let stacked = Transform3::from_stack(Some(s), Some(r), Some(t));
+            let stacked = T3::from_stack(Some(s), Some(r), Some(t));
             let manual = t * r * s;
             let a = stacked.to_world(v);
             let b = manual.to_world(v);
@@ -403,48 +416,46 @@ mod tests {
 
     #[test]
     fn test_transform() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
-        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 2.0, 2.0));
+        let transform_translate = T3::from_translation(V3::new(1.0, 2.0, 0.0));
+        let transform_rotate = T3::from_axis_angle(V3::z_axis(), PI / 4.0);
+        let transform_scale = T3::from_scale(V3::new(2.0, 2.0, 2.0));
 
-        let test_vec = Vec3::new(1.0, 1.0, 1.0);
+        let test_vec = V3::new(1.0, 1.0, 1.0);
 
-        // translation should not affect vectors
         let translated_vec = transform_translate.to_world(test_vec);
-        assert!((translated_vec - test_vec).norm() < 1e-6, "translation should not affect vectors");
+        assert!(
+            (translated_vec - test_vec).norm() < 1e-6,
+            "translation should not affect vectors"
+        );
 
-        // rotation should preserve norm
         let rotated_vec = transform_rotate.to_world(test_vec);
         crate::assert_approx_eq(rotated_vec.norm(), test_vec.norm(), 1e-5);
 
-        // scale should multiply components
         let scaled_vec = transform_scale.to_world(test_vec);
         crate::assert_approx_eq(scaled_vec.norm(), test_vec.norm() * 2.0, 1e-5);
 
-        let test_point = Point3::ORIGIN + test_vec;
+        let test_point = P3::origin() + test_vec;
 
-        // translation should shift point
         let translated_point = transform_translate.to_world(test_point);
         crate::assert_approx_eq(translated_point.x(), test_point.x() + 1.0, 1e-5);
         crate::assert_approx_eq(translated_point.y(), test_point.y() + 2.0, 1e-5);
 
-        // rotation should preserve distance from origin
         let rotated_point = transform_rotate.to_world(test_point);
         crate::assert_approx_eq(
-            (rotated_point - Point3::ORIGIN).norm(),
-            (test_point - Point3::ORIGIN).norm(),
+            (rotated_point - P3::origin()).norm(),
+            (test_point - P3::origin()).norm(),
             1e-5,
         );
     }
 
     #[test]
     fn test_round_trip_error() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 2.0, 0.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
-        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
+        let transform_translate = T3::from_translation(V3::new(1.0, 2.0, 0.0));
+        let transform_rotate = T3::from_axis_angle(V3::z_axis(), PI / 4.0);
+        let transform_scale = T3::from_scale(V3::new(2.0, 3.0, 4.0));
 
         let trs = transform_translate * transform_rotate * transform_scale;
-        let trs2 = Transform3::from_stack(
+        let trs2 = T3::from_stack(
             Some(transform_scale),
             Some(transform_rotate),
             Some(transform_translate),
@@ -453,92 +464,133 @@ mod tests {
         let tr = transform_translate * transform_rotate;
         let ts = transform_translate * transform_scale;
 
-        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
+        let test_vec = V3::new(1.0, 1.0, 0.0).normalized();
 
-        let eval_round_trip_error_vec = |transform: Transform3, input: Vec3| {
+        let eval_round_trip_error_vec = |transform: T3, input: V3| {
             (transform.to_local(transform.to_world(input)) - input).norm()
         };
-        let eval_round_trip_error_point = |transform: Transform3, input: Point3| {
+        let eval_round_trip_error_point = |transform: T3, input: P3| {
             (transform.to_local(transform.to_world(input)) - input).norm()
         };
 
         let tolerance = 1e-5;
-        for (name, transform) in [("trs", trs), ("trs2", trs2), ("rs", rs), ("tr", tr), ("ts", ts)] {
+        for (name, transform) in [
+            ("trs", trs),
+            ("trs2", trs2),
+            ("rs", rs),
+            ("tr", tr),
+            ("ts", ts),
+        ] {
             let err = eval_round_trip_error_vec(transform, test_vec);
             assert!(err < tolerance, "vec round-trip error for {} = {}", name, err);
         }
 
-        let test_point = Point3::ORIGIN + test_vec;
-        for (name, transform) in [("trs", trs), ("trs2", trs2), ("rs", rs), ("tr", tr), ("ts", ts)] {
+        let test_point = P3::origin() + test_vec;
+        for (name, transform) in [
+            ("trs", trs),
+            ("trs2", trs2),
+            ("rs", rs),
+            ("tr", tr),
+            ("ts", ts),
+        ] {
             let err = eval_round_trip_error_point(transform, test_point);
-            assert!(err < tolerance, "point round-trip error for {} = {}", name, err);
+            assert!(
+                err < tolerance,
+                "point round-trip error for {} = {}",
+                name,
+                err
+            );
         }
     }
 
     #[test]
     fn test_transform_combination() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 1.0, 0.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
-        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
+        let transform_translate = T3::from_translation(V3::new(1.0, 1.0, 0.0));
+        let transform_rotate = T3::from_axis_angle(V3::z_axis(), PI / 4.0);
+        let transform_scale = T3::from_scale(V3::new(2.0, 3.0, 4.0));
 
         let combination_trs = transform_translate * transform_rotate * transform_scale;
-        let combination_trs_2 = Transform3::from_stack(
+        let combination_trs_2 = T3::from_stack(
             Some(transform_scale),
             Some(transform_rotate),
             Some(transform_translate),
         );
-        let Transform3 {
-            forward,
-            reverse: _,
-        } = combination_trs_2.clone();
-        let redone = Transform3::new_from_matrix(forward.into()).unwrap();
+        let Transform3 { forward, reverse: _ } = combination_trs_2.clone();
+        let redone = T3::new_from_matrix(forward.into()).unwrap();
 
-        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
+        let test_vec = V3::new(1.0, 1.0, 0.0).normalized();
 
-        // from_stack should match manual multiplication
         let v1 = combination_trs.to_world(test_vec);
         let v2 = combination_trs_2.to_world(test_vec);
-        assert!((v1 - v2).norm() < 1e-5, "from_stack vs mul mismatch for vec: {:?} vs {:?}", v1, v2);
+        assert!(
+            (v1 - v2).norm() < 1e-5,
+            "from_stack vs mul mismatch for vec: {:?} vs {:?}",
+            v1,
+            v2
+        );
 
-        // reconstructed from matrix should match
         let v3 = redone.to_world(test_vec);
-        assert!((v1 - v3).norm() < 1e-5, "redone vs original mismatch for vec: {:?} vs {:?}", v1, v3);
+        assert!(
+            (v1 - v3).norm() < 1e-5,
+            "redone vs original mismatch for vec: {:?} vs {:?}",
+            v1,
+            v3
+        );
 
-        let test_point = Point3::ORIGIN + test_vec;
+        let test_point = P3::origin() + test_vec;
 
         let p1 = combination_trs.to_world(test_point);
         let p2 = combination_trs_2.to_world(test_point);
-        assert!((p1 - p2).norm() < 1e-5, "from_stack vs mul mismatch for point: {:?} vs {:?}", p1, p2);
+        assert!(
+            (p1 - p2).norm() < 1e-5,
+            "from_stack vs mul mismatch for point: {:?} vs {:?}",
+            p1,
+            p2
+        );
 
         let p3 = redone.to_world(test_point);
-        assert!((p1 - p3).norm() < 1e-5, "redone vs original mismatch for point: {:?} vs {:?}", p1, p3);
+        assert!(
+            (p1 - p3).norm() < 1e-5,
+            "redone vs original mismatch for point: {:?} vs {:?}",
+            p1,
+            p3
+        );
     }
 
     #[test]
     fn test_reverse_transform_combination() {
-        let transform_translate = Transform3::from_translation(Vec3::new(1.0, 1.0, 0.0));
-        let transform_rotate = Transform3::from_axis_angle(Vec3::Z, PI / 4.0);
-        let transform_scale = Transform3::from_scale(Vec3::new(2.0, 3.0, 4.0));
+        let transform_translate = T3::from_translation(V3::new(1.0, 1.0, 0.0));
+        let transform_rotate = T3::from_axis_angle(V3::z_axis(), PI / 4.0);
+        let transform_scale = T3::from_scale(V3::new(2.0, 3.0, 4.0));
 
         let combination_trs = transform_translate * transform_rotate * transform_scale;
-        let combination_trs_2 = Transform3::from_stack(
+        let combination_trs_2 = T3::from_stack(
             Some(transform_scale),
             Some(transform_rotate),
             Some(transform_translate),
         );
 
-        let test_vec = Vec3::new(1.0, 1.0, 0.0).normalized();
+        let test_vec = V3::new(1.0, 1.0, 0.0).normalized();
 
-        // from_stack and manual mul should agree on to_local
         let v1 = combination_trs.to_local(test_vec);
         let v2 = combination_trs_2.to_local(test_vec);
-        assert!((v1 - v2).norm() < 1e-5, "to_local mismatch for vec: {:?} vs {:?}", v1, v2);
+        assert!(
+            (v1 - v2).norm() < 1e-5,
+            "to_local mismatch for vec: {:?} vs {:?}",
+            v1,
+            v2
+        );
 
-        let test_point = Point3::ORIGIN + test_vec;
+        let test_point = P3::origin() + test_vec;
 
         let p1 = combination_trs.to_local(test_point);
         let p2 = combination_trs_2.to_local(test_point);
-        assert!((p1 - p2).norm() < 1e-5, "to_local mismatch for point: {:?} vs {:?}", p1, p2);
+        assert!(
+            (p1 - p2).norm() < 1e-5,
+            "to_local mismatch for point: {:?} vs {:?}",
+            p1,
+            p2
+        );
     }
 
     #[test]
@@ -546,32 +598,39 @@ mod tests {
         let n_translate =
             nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(1.0, 2.0, 3.0));
 
-        let matrix = Matrix4x4::from(n_translate);
-        let simd_vec = Vec3(f32x4::from_array([1.0, 2.0, 3.0, 0.0]));
-        let simd_point = Point3(f32x4::from_array([1.0, 2.0, 3.0, 1.0]));
+        let matrix: M4 = Matrix4x4::from(n_translate);
+        let simd_vec = V3::new(1.0, 2.0, 3.0);
+        let simd_point = P3::new(1.0, 2.0, 3.0);
 
-        let transform = Transform3::new_from_matrix(n_translate).unwrap();
+        let transform = T3::new_from_matrix(n_translate).unwrap();
 
-        // translation should not affect vectors
         let result_vec = transform.to_world(simd_vec);
-        assert!((result_vec - simd_vec).norm() < 1e-6, "translation affected vector");
+        assert!(
+            (result_vec - simd_vec).norm() < 1e-6,
+            "translation affected vector"
+        );
 
-        // matrix * vec should also not translate
         let mat_vec = matrix * simd_vec;
-        assert!((mat_vec - simd_vec).norm() < 1e-6, "matrix translation affected vector");
+        assert!(
+            (mat_vec - simd_vec).norm() < 1e-6,
+            "matrix translation affected vector"
+        );
 
-        // translation should shift point by (1,2,3)
         let result_point = transform.to_world(simd_point);
         crate::assert_approx_eq(result_point.x(), 2.0, 1e-5);
         crate::assert_approx_eq(result_point.y(), 4.0, 1e-5);
         crate::assert_approx_eq(result_point.z(), 6.0, 1e-5);
 
-        // matrix * point should match
         let mat_point = matrix * simd_point;
-        assert!((result_point - mat_point).norm() < 1e-6, "transform vs matrix mismatch for point");
+        assert!(
+            (result_point - mat_point).norm() < 1e-6,
+            "transform vs matrix mismatch for point"
+        );
 
-        // round-trip: to_local(to_world(p)) should return original
         let round_trip = transform.to_local(result_point);
-        assert!((round_trip - simd_point).norm() < 1e-5, "point round-trip failed");
+        assert!(
+            (round_trip - simd_point).norm() < 1e-5,
+            "point round-trip failed"
+        );
     }
 }

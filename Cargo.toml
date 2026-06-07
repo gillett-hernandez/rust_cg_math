@@ -10,15 +10,15 @@ edition = "2024"
 [dependencies]
 # itertools = "0.10.1"
 num-traits = "~0.2"
-nalgebra = "~0.32"
+nalgebra = "~0.35"
 num_cpus = "~1"
-ordered-float = "~4.6"
-rand = "~0.8"
-rayon = "~1.10"
+ordered-float = "~5.3"
+rand = { version = "~0.10.1", features = ["thread_rng"] }
+rayon = "~1.12"
 serde = { version = "~1.0", features = ["derive"], optional = true }
 deepsize = { version = "~0.2", optional = true }
-typenum = "1.18.0"
-# thermite = { git = "https://github.com/raygon-renderer/thermite" }
+typenum = "1.20.1"
+thermite = { git = "https://github.com/raygon-renderer/thermite" }
 
 [dev-dependencies]
 proptest = "1.10.0"
@@ -28,9 +28,6 @@ serde_json = { version = "~1.0" }
 serde = { version = "~1.0", features = ["derive"], optional = true }
 
 [features]
-default = ["simdfloat_patch", "serde"]
+default = ["serde"]
 serde = ["dep:serde"]
 deepsize = ["dep:deepsize"]
-# feature flag to bring in a custom trait that adds .exp and .powf methods to f32x4.
-# temporary fix pending https://github.com/rust-lang/portable-simd/pull/400 being brought into the rust nightly
-simdfloat_patch = []
