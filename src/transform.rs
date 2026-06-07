@@ -1,8 +1,12 @@
 use crate::prelude::*;
+use thermite::register::{LinAlg3Register, LinAlg4Register};
 use thermite::simd::Simd;
-use thermite::register::LinAlg3Register;
+use thermite::vector::LinAlg4Vector;
 
-pub struct Matrix4x4<S: Simd>(pub Vector<S::f32x16>);
+/// 4x4 matrix stored as 4 column vectors (column-major, matches nalgebra's
+/// memory layout). Mat-vec and mat-mat operations dispatch to thermite's
+/// `LinAlg4Vector::mat4_*` primitives.
+pub struct Matrix4x4<S: Simd>(pub [Vector<S::f32x4>; 4]);
 
 impl<S: Simd> Copy for Matrix4x4<S> {}
 impl<S: Simd> Clone for Matrix4x4<S> {
@@ -23,74 +27,155 @@ impl<S: Simd> std::fmt::Debug for Matrix4x4<S> {
 
 impl<S: Simd> Matrix4x4<S> {
     pub fn identity() -> Matrix4x4<S> {
-        Matrix4x4(Vector::<S::f32x16>::new([
-            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-        ]))
+        Matrix4x4([
+            Vector::<S::f32x4>::new([1.0, 0.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 1.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 1.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
+        ])
     }
 
-    /// Column-major flat layout: `m[col * 4 + row]`. Matches nalgebra's
-    /// in-memory order, which lets `From<nalgebra::Matrix4>` be a 1:1 copy.
+    /// Column-major flat layout: `out[col * 4 + row] = m[row][col]`.
     pub fn as_array(&self) -> [f32; 16] {
-        let arr = self.0.into_array();
         let mut out = [0.0_f32; 16];
-        for i in 0..16 {
-            out[i] = arr[i];
+        for c in 0..4 {
+            let col = self.0[c];
+            out[c * 4 + 0] = col.extract::<0>();
+            out[c * 4 + 1] = col.extract::<1>();
+            out[c * 4 + 2] = col.extract::<2>();
+            out[c * 4 + 3] = col.extract::<3>();
         }
         out
     }
 
     pub fn from_array(values: [f32; 16]) -> Self {
-        Matrix4x4(Vector::<S::f32x16>::new(values))
+        Matrix4x4([
+            Vector::<S::f32x4>::new([values[0], values[1], values[2], values[3]]),
+            Vector::<S::f32x4>::new([values[4], values[5], values[6], values[7]]),
+            Vector::<S::f32x4>::new([values[8], values[9], values[10], values[11]]),
+            Vector::<S::f32x4>::new([values[12], values[13], values[14], values[15]]),
+        ])
     }
+}
 
+impl<S: Simd> Matrix4x4<S>
+where
+    S::f32x4: LinAlg4Register,
+{
     pub fn transpose(&self) -> Matrix4x4<S> {
-        // Column-major: swap col/row indices.
-        let m = self.as_array();
-        let mut t = [0.0_f32; 16];
-        for c in 0..4 {
-            for r in 0..4 {
-                t[r * 4 + c] = m[c * 4 + r];
-            }
-        }
-        Self::from_array(t)
+        Matrix4x4(<Vector<S::f32x4> as LinAlg4Vector>::mat4_transpose(&self.0))
     }
 }
 
-// Helper: m[col * 4 + row] under column-major storage.
-#[inline(always)]
-fn m_at(m: &[f32; 16], row: usize, col: usize) -> f32 {
-    m[col * 4 + row]
+impl<S: Simd> Matrix4x4<S> {
+    /// General 4x4 inverse via the cofactor / adjugate closed form. Returns
+    /// `None` if the matrix is singular (`|det| < f32::EPSILON`). Runs at
+    /// construction time (once per transform), so a scalar formulation is fine.
+    pub fn try_inverse(&self) -> Option<Matrix4x4<S>> {
+        // Row-major flat view: `m[row * 4 + col]`. (as_array() is column-major,
+        // so transpose the indexing here.) Cofactor formula is written against
+        // row-major below for readability, then re-emitted column-major.
+        let a = self.as_array(); // column-major: a[col*4 + row]
+        let m = |row: usize, col: usize| a[col * 4 + row];
+
+        let m00 = m(0, 0);
+        let m01 = m(0, 1);
+        let m02 = m(0, 2);
+        let m03 = m(0, 3);
+        let m10 = m(1, 0);
+        let m11 = m(1, 1);
+        let m12 = m(1, 2);
+        let m13 = m(1, 3);
+        let m20 = m(2, 0);
+        let m21 = m(2, 1);
+        let m22 = m(2, 2);
+        let m23 = m(2, 3);
+        let m30 = m(3, 0);
+        let m31 = m(3, 1);
+        let m32 = m(3, 2);
+        let m33 = m(3, 3);
+
+        // 2x2 sub-determinants of the bottom two rows (s) and top two rows (c).
+        let s0 = m00 * m11 - m10 * m01;
+        let s1 = m00 * m12 - m10 * m02;
+        let s2 = m00 * m13 - m10 * m03;
+        let s3 = m01 * m12 - m11 * m02;
+        let s4 = m01 * m13 - m11 * m03;
+        let s5 = m02 * m13 - m12 * m03;
+
+        let c5 = m22 * m33 - m32 * m23;
+        let c4 = m21 * m33 - m31 * m23;
+        let c3 = m21 * m32 - m31 * m22;
+        let c2 = m20 * m33 - m30 * m23;
+        let c1 = m20 * m32 - m30 * m22;
+        let c0 = m20 * m31 - m30 * m21;
+
+        let det = s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0;
+        if det.abs() < f32::EPSILON {
+            return None;
+        }
+        let inv_det = 1.0 / det;
+
+        // Inverse entries in row-major `r[row][col]`.
+        let r00 = (m11 * c5 - m12 * c4 + m13 * c3) * inv_det;
+        let r01 = (-m01 * c5 + m02 * c4 - m03 * c3) * inv_det;
+        let r02 = (m31 * s5 - m32 * s4 + m33 * s3) * inv_det;
+        let r03 = (-m21 * s5 + m22 * s4 - m23 * s3) * inv_det;
+
+        let r10 = (-m10 * c5 + m12 * c2 - m13 * c1) * inv_det;
+        let r11 = (m00 * c5 - m02 * c2 + m03 * c1) * inv_det;
+        let r12 = (-m30 * s5 + m32 * s2 - m33 * s1) * inv_det;
+        let r13 = (m20 * s5 - m22 * s2 + m23 * s1) * inv_det;
+
+        let r20 = (m10 * c4 - m11 * c2 + m13 * c0) * inv_det;
+        let r21 = (-m00 * c4 + m01 * c2 - m03 * c0) * inv_det;
+        let r22 = (m30 * s4 - m31 * s2 + m33 * s0) * inv_det;
+        let r23 = (-m20 * s4 + m21 * s2 - m23 * s0) * inv_det;
+
+        let r30 = (-m10 * c3 + m11 * c1 - m12 * c0) * inv_det;
+        let r31 = (m00 * c3 - m01 * c1 + m02 * c0) * inv_det;
+        let r32 = (-m30 * s3 + m31 * s1 - m32 * s0) * inv_det;
+        let r33 = (m20 * s3 - m21 * s1 + m22 * s0) * inv_det;
+
+        // Re-emit column-major: each column is one f32x4.
+        Some(Matrix4x4([
+            Vector::<S::f32x4>::new([r00, r10, r20, r30]),
+            Vector::<S::f32x4>::new([r01, r11, r21, r31]),
+            Vector::<S::f32x4>::new([r02, r12, r22, r32]),
+            Vector::<S::f32x4>::new([r03, r13, r23, r33]),
+        ]))
+    }
 }
 
-impl<S: Simd> Mul<Vec3<S>> for Matrix4x4<S> {
+impl<S: Simd> Mul<Vec3<S>> for Matrix4x4<S>
+where
+    S::f32x4: LinAlg4Register,
+{
     type Output = Vec3<S>;
     fn mul(self, rhs: Vec3<S>) -> Self::Output {
-        // Vec3 has w=0, so the translation column (col 3) cancels out.
-        let m = self.as_array();
-        let v = rhs.as_array();
-        let x = m_at(&m, 0, 0) * v[0] + m_at(&m, 0, 1) * v[1] + m_at(&m, 0, 2) * v[2] + m_at(&m, 0, 3) * v[3];
-        let y = m_at(&m, 1, 0) * v[0] + m_at(&m, 1, 1) * v[1] + m_at(&m, 1, 2) * v[2] + m_at(&m, 1, 3) * v[3];
-        let z = m_at(&m, 2, 0) * v[0] + m_at(&m, 2, 1) * v[1] + m_at(&m, 2, 2) * v[2] + m_at(&m, 2, 3) * v[3];
-        Vec3::new(x, y, z)
+        // Vec3 has w=0, so mat4_vec3_product is the appropriate primitive —
+        // it skips the translation column and avoids the homogenization step.
+        // COLUMN_MAJOR=true because our `self.0` stores columns directly.
+        Vec3(rhs.0.mat4_vec3_product::<true>(&self.0))
     }
 }
 
-impl<S: Simd> Mul<Point3<S>> for Matrix4x4<S> {
+impl<S: Simd> Mul<Point3<S>> for Matrix4x4<S>
+where
+    S::f32x4: LinAlg4Register,
+{
     type Output = Point3<S>;
     fn mul(self, rhs: Point3<S>) -> Self::Output {
-        let m = self.as_array();
-        let p = rhs.as_array();
-        let x = m_at(&m, 0, 0) * p[0] + m_at(&m, 0, 1) * p[1] + m_at(&m, 0, 2) * p[2] + m_at(&m, 0, 3) * p[3];
-        let y = m_at(&m, 1, 0) * p[0] + m_at(&m, 1, 1) * p[1] + m_at(&m, 1, 2) * p[2] + m_at(&m, 1, 3) * p[3];
-        let z = m_at(&m, 2, 0) * p[0] + m_at(&m, 2, 1) * p[1] + m_at(&m, 2, 2) * p[2] + m_at(&m, 2, 3) * p[3];
-        let w = m_at(&m, 3, 0) * p[0] + m_at(&m, 3, 1) * p[1] + m_at(&m, 3, 2) * p[2] + m_at(&m, 3, 3) * p[3];
-        Point3(Vector::<S::f32x4>::new([x, y, z, w])).normalize()
+        // Point3 has w=1, so mat4_vec4_product applies the full 4x4 (including
+        // the translation column). `normalize()` divides by the resulting w to
+        // bring w back to 1 (no-op for affine transforms).
+        Point3(rhs.0.mat4_vec4_product::<true>(&self.0)).normalize()
     }
 }
 
 impl<S: Simd> Mul<Ray<S>> for Matrix4x4<S>
 where
-    S::f32x4: LinAlg3Register,
+    S::f32x4: LinAlg3Register + LinAlg4Register,
 {
     type Output = Ray<S>;
     fn mul(self, rhs: Ray<S>) -> Self::Output {
@@ -102,23 +187,15 @@ where
     }
 }
 
-impl<S: Simd> Mul for Matrix4x4<S> {
+impl<S: Simd> Mul for Matrix4x4<S>
+where
+    S::f32x4: LinAlg4Register,
+{
     type Output = Matrix4x4<S>;
     fn mul(self, rhs: Matrix4x4<S>) -> Self::Output {
-        // Column-major: out[col, row] = sum_k a[k, row] * b[col, k].
-        let a = self.as_array();
-        let b = rhs.as_array();
-        let mut out = [0.0_f32; 16];
-        for c in 0..4 {
-            for r in 0..4 {
-                let mut sum = 0.0_f32;
-                for k in 0..4 {
-                    sum += m_at(&a, r, k) * m_at(&b, k, c);
-                }
-                out[c * 4 + r] = sum;
-            }
-        }
-        Self::from_array(out)
+        Matrix4x4(<Vector<S::f32x4> as LinAlg4Vector>::mat4_product::<true>(
+            &self.0, &rhs.0,
+        ))
     }
 }
 
@@ -149,7 +226,7 @@ impl<S: Simd> std::fmt::Debug for Transform3<S> {
 
 impl<S: Simd> Transform3<S>
 where
-    S::f32x4: LinAlg3Register,
+    S::f32x4: LinAlg4Register,
 {
     pub fn new() -> Self {
         Transform3 {
@@ -157,11 +234,11 @@ where
             reverse: Matrix4x4::identity(),
         }
     }
-    pub fn new_from_matrix(forward: nalgebra::Matrix4<f32>) -> Option<Self> {
-        forward.try_inverse().map(|inverse| Transform3 {
-            forward: Matrix4x4::from(forward),
-            reverse: Matrix4x4::from(inverse),
-        })
+    /// Build a transform from an arbitrary forward matrix, computing the
+    /// reverse via a general 4x4 inverse. Returns `None` if `forward` is
+    /// singular.
+    pub fn new_from_matrix(forward: Matrix4x4<S>) -> Option<Self> {
+        forward.try_inverse().map(|reverse| Transform3 { forward, reverse })
     }
 
     pub fn inverse(self) -> Transform3<S> {
@@ -169,25 +246,77 @@ where
     }
 
     pub fn from_translation(shift: Vec3<S>) -> Self {
-        Transform3::new_from_matrix(nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(
-            shift.x(),
-            shift.y(),
-            shift.z(),
-        )))
-        .expect("translation matrix was not invertible")
+        let (tx, ty, tz) = (shift.x(), shift.y(), shift.z());
+        // Affine translation: inverse is translation by the negated shift.
+        // Columns 0..2 are the identity basis; column 3 holds the translation.
+        let forward = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([1.0, 0.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 1.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 1.0, 0.0]),
+            Vector::<S::f32x4>::new([tx, ty, tz, 1.0]),
+        ]);
+        let reverse = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([1.0, 0.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 1.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 1.0, 0.0]),
+            Vector::<S::f32x4>::new([-tx, -ty, -tz, 1.0]),
+        ]);
+        Transform3::new_from_raw(forward, reverse)
     }
 
     pub fn from_scale(scale: Vec3<S>) -> Self {
-        Transform3::new_from_matrix(nalgebra::Matrix4::new_nonuniform_scaling(
-            &nalgebra::Vector3::new(scale.x(), scale.y(), scale.z()),
-        ))
-        .expect("scale matrix was not invertible")
+        let (sx, sy, sz) = (scale.x(), scale.y(), scale.z());
+        // Diagonal scale: inverse is the reciprocal scale.
+        let forward = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([sx, 0.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, sy, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, sz, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
+        ]);
+        let reverse = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([1.0 / sx, 0.0, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 1.0 / sy, 0.0, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 1.0 / sz, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
+        ]);
+        Transform3::new_from_raw(forward, reverse)
     }
 
+    /// Rotation about a (unit-length) `axis` by `radians`, via Rodrigues'
+    /// formula. The inverse of an orthonormal rotation is its transpose, so the
+    /// reverse matrix is built directly without a general inversion.
     pub fn from_axis_angle(axis: Vec3<S>, radians: f32) -> Self {
-        let axisangle = radians * nalgebra::Vector3::new(axis.x(), axis.y(), axis.z());
-        let affine = nalgebra::Matrix4::from_scaled_axis(axisangle);
-        Transform3::new_from_matrix(affine).expect("rotation matrix was not invertible")
+        let (x, y, z) = (axis.x(), axis.y(), axis.z());
+        let c = radians.cos();
+        let s = radians.sin();
+        let t = 1.0 - c;
+
+        // 3x3 rotation entries r[row][col] (Rodrigues).
+        let r00 = t * x * x + c;
+        let r01 = t * x * y - s * z;
+        let r02 = t * x * z + s * y;
+        let r10 = t * x * y + s * z;
+        let r11 = t * y * y + c;
+        let r12 = t * y * z - s * x;
+        let r20 = t * x * z - s * y;
+        let r21 = t * y * z + s * x;
+        let r22 = t * z * z + c;
+
+        // Forward: columns are (r[0][col], r[1][col], r[2][col], 0).
+        let forward = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([r00, r10, r20, 0.0]),
+            Vector::<S::f32x4>::new([r01, r11, r21, 0.0]),
+            Vector::<S::f32x4>::new([r02, r12, r22, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
+        ]);
+        // Reverse is the transpose: columns are the rows of `forward`.
+        let reverse = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([r00, r01, r02, 0.0]),
+            Vector::<S::f32x4>::new([r10, r11, r12, 0.0]),
+            Vector::<S::f32x4>::new([r20, r21, r22, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
+        ]);
+        Transform3::new_from_raw(forward, reverse)
     }
 
     pub fn from_stack(
@@ -217,13 +346,20 @@ where
         v1: Vector<S::f32x4>,
         v2: Vector<S::f32x4>,
     ) -> Self {
-        let extract = |v: Vector<S::f32x4>| (v.extract::<0>(), v.extract::<1>(), v.extract::<2>());
-        let (m11, m12, m13) = extract(v0);
-        let (m21, m22, m23) = extract(v1);
-        let (m31, m32, m33) = extract(v2);
+        // Original `m`: columns (v0, v1, v2, e3) where e3 = (0,0,0,1). Each of
+        // v0/v1/v2 is a tangent-frame basis vector in lanes 0..2 with lane 3=0.
+        // `forward` is `m.transpose()`; `reverse` is `m` (since the inverse of
+        // an orthonormal frame is its transpose).
+        let extract3 = |v: Vector<S::f32x4>| (v.extract::<0>(), v.extract::<1>(), v.extract::<2>());
+        let (m11, m12, m13) = extract3(v0);
+        let (m21, m22, m23) = extract3(v1);
+        let (m31, m32, m33) = extract3(v2);
 
-        let m = Matrix4x4::<S>::from_array([
-            m11, m12, m13, 0.0, m21, m22, m23, 0.0, m31, m32, m33, 0.0, 0.0, 0.0, 0.0, 1.0,
+        let m = Matrix4x4::<S>([
+            Vector::<S::f32x4>::new([m11, m12, m13, 0.0]),
+            Vector::<S::f32x4>::new([m21, m22, m23, 0.0]),
+            Vector::<S::f32x4>::new([m31, m32, m33, 0.0]),
+            Vector::<S::f32x4>::new([0.0, 0.0, 0.0, 1.0]),
         ]);
         Transform3::new_from_raw(m.transpose(), m)
     }
@@ -252,42 +388,16 @@ where
 
 impl<S: Simd> From<TangentFrame<S>> for Transform3<S>
 where
-    S::f32x4: LinAlg3Register,
+    S::f32x4: LinAlg3Register + LinAlg4Register,
 {
     fn from(value: TangentFrame<S>) -> Self {
         Transform3::from_vector_stack(value.tangent.0, value.bitangent.0, value.normal.0)
     }
 }
 
-impl<S: Simd> From<nalgebra::Matrix4<f32>> for Matrix4x4<S> {
-    fn from(matrix: nalgebra::Matrix4<f32>) -> Self {
-        // nalgebra is column-major in memory; the legacy code took
-        // `matrix.as_slice()` which gives column-major order, but indexed it
-        // into Matrix4x4 as if it were row-major. Match that legacy behavior
-        // to keep test invariants stable.
-        let slice = matrix.as_slice();
-        let mut values = [0.0_f32; 16];
-        for (i, v) in slice.iter().enumerate() {
-            values[i] = *v;
-        }
-        Matrix4x4::from_array(values)
-    }
-}
-
-impl<S: Simd> From<Matrix4x4<S>> for nalgebra::Matrix4<f32> {
-    fn from(other: Matrix4x4<S>) -> Self {
-        let m = other.as_array();
-        nalgebra::Matrix4::new(
-            m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13],
-            m[14], m[15],
-        )
-        .transpose()
-    }
-}
-
 impl<S: Simd> Mul<Transform3<S>> for Transform3<S>
 where
-    S::f32x4: LinAlg3Register,
+    S::f32x4: LinAlg4Register,
 {
     type Output = Transform3<S>;
     fn mul(self, rhs: Transform3<S>) -> Self::Output {
@@ -516,7 +626,7 @@ mod tests {
             Some(transform_translate),
         );
         let Transform3 { forward, reverse: _ } = combination_trs_2.clone();
-        let redone = T3::new_from_matrix(forward.into()).unwrap();
+        let redone = T3::new_from_matrix(forward).unwrap();
 
         let test_vec = V3::new(1.0, 1.0, 0.0).normalized();
 
@@ -595,14 +705,19 @@ mod tests {
 
     #[test]
     fn test_translate() {
-        let n_translate =
-            nalgebra::Matrix4::new_translation(&nalgebra::Vector3::new(1.0, 2.0, 3.0));
-
-        let matrix: M4 = Matrix4x4::from(n_translate);
+        // Column-major flat layout: identity basis in columns 0..2, translation
+        // (1, 2, 3) in column 3.
+        #[rustfmt::skip]
+        let matrix: M4 = Matrix4x4::from_array([
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            1.0, 2.0, 3.0, 1.0,
+        ]);
         let simd_vec = V3::new(1.0, 2.0, 3.0);
         let simd_point = P3::new(1.0, 2.0, 3.0);
 
-        let transform = T3::new_from_matrix(n_translate).unwrap();
+        let transform = T3::from_translation(V3::new(1.0, 2.0, 3.0));
 
         let result_vec = transform.to_world(simd_vec);
         assert!(

@@ -10,7 +10,6 @@ edition = "2024"
 [dependencies]
 # itertools = "0.10.1"
 num-traits = "~0.2"
-nalgebra = "~0.35"
 num_cpus = "~1"
 ordered-float = "~5.3"
 rand = { version = "~0.10.1", features = ["thread_rng"] }
