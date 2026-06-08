@@ -71,6 +71,19 @@ impl<S: Simd> Matrix4x4<S> {
     /// General 4x4 inverse via the cofactor / adjugate closed form. Returns
     /// `None` if the matrix is singular (`|det| < f32::EPSILON`). Runs at
     /// construction time (once per transform), so a scalar formulation is fine.
+    ///
+    /// This stays scalar deliberately. A SIMD reformulation was profiled and
+    /// lost: Lengyel's cross/dot block form regressed (the per-column dot
+    /// products are horizontal reductions, plus scalar `extract`/insert
+    /// round-trips to read the bottom row and rebuild the 4th column), and the
+    /// shuffle-based GLM form is unreachable in fast form — thermite's only
+    /// backend-portable shuffle (`swizzle!`/`SwizzleRegister`) lowers to a
+    /// `permutevar`+`blend` sequence on x86 rather than an immediate `vshufps`,
+    /// and the immediate `ShuffleRegister` path isn't implemented for the
+    /// scalar (`ArrayRegister`) test backend. For one lone 4x4 the cross-lane
+    /// data movement costs more than straight-line scalar FMAs save, so the
+    /// compiler-optimized scalar version below is the fastest portable option.
+    /// See `benches/math_benches.rs::mat4_try_inverse`.
     pub fn try_inverse(&self) -> Option<Matrix4x4<S>> {
         // Row-major flat view: `m[row * 4 + col]`. (as_array() is column-major,
         // so transpose the indexing here.) Cofactor formula is written against
