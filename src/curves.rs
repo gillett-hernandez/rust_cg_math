@@ -535,29 +535,6 @@ impl Curve {
     }
 }
 
-impl SpectralPowerDistributionFunction<f32> for Curve {
-    fn evaluate_power(&self, lambda: f32) -> f32 {
-        self.evaluate(lambda).max(0.0)
-    }
-    fn evaluate_clamped(&self, lambda: f32) -> f32 {
-        self.evaluate(lambda).clamp(0.0, ONE_SUB_EPSILON)
-    }
-    fn sample_power_and_pdf(
-        &self,
-        wavelength_range: Bounds1D,
-        sample: Sample1D,
-    ) -> (SingleWavelength, PDF<f32, Length>) {
-        match &self {
-            _ => {
-                let ws = SingleWavelength::new_from_range(sample.x, wavelength_range);
-                (
-                    ws.replace_energy(self.evaluate(ws.lambda)),
-                    PDF::new(1.0 / wavelength_range.span()), // uniform distribution
-                )
-            }
-        }
-    }
-}
 
 /// Generic SIMD evaluator for `Curve`. Replaces the simdfloat_patch-gated
 /// `SpectralPowerDistributionFunction<f32x4> for Curve` and works across any
@@ -568,14 +545,14 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
 /// is scalarized on most CPUs anyway, so the simpler `map` path is close to
 /// equivalent in practice. A thermite-`gather_or` path can be added later if
 /// profiling shows it matters.
-impl<R> SpectralPowerDistributionFunction<Vector<R>> for Curve
+#[thermite::dispatch(V)]
+impl<V> SpectralPowerDistributionFunction<V> for Curve
 where
-    R: thermite::register::FloatRegister<Element = f32>,
-    Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
 {
-    fn evaluate_power(&self, lambda: Vector<R>) -> Vector<R> {
+    fn evaluate_power(&self, lambda: V) -> V {
         match self {
-            Curve::Const(v) => Vector::<R>::splat(v.max(0.0)),
+            Curve::Const(v) => V::splat(v.max(0.0)),
             Curve::Polynomial {
                 domain_range_mapping,
                 coefficients,
@@ -583,39 +560,39 @@ where
                 let [x0, xs, y0, ys]: [f32; 4] = *domain_range_mapping;
                 debug_assert!(xs > 0.0);
 
-                let x = (lambda - Vector::<R>::splat(x0)) / Vector::<R>::splat(xs);
-                let mut sum = Vector::<R>::splat(y0);
+                let x = (lambda - V::splat(x0)) /V::splat(xs);
+                let mut sum =V::splat(y0);
                 let mut xpow = x;
                 for i in 0..8 {
-                    sum += Vector::<R>::splat(coefficients[i]) * xpow;
+                    sum += V::splat(coefficients[i]) * xpow;
                     xpow *= x;
                 }
-                <Vector<R> as NumericVector>::max(sum, <Vector<R> as NumericVector>::ZERO) * Vector::<R>::splat(ys)
+                <V as NumericVector>::max(sum, <V as NumericVector>::ZERO) * V::splat(ys)
             }
             Curve::Cauchy { a, b } => {
-                Vector::<R>::splat(*a) + Vector::<R>::splat(*b) / (lambda * lambda)
+                V::splat(*a) + V::splat(*b) / (lambda * lambda)
             }
             Curve::Exponential { signal } => {
-                let mut val = <Vector<R> as NumericVector>::ZERO;
+                let mut val = <V as NumericVector>::ZERO;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
                     val += gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
                 val
             }
             Curve::InverseExponential { signal } => {
-                let mut val = <Vector<R> as NumericVector>::ONE;
+                let mut val = <V as NumericVector>::ONE;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
                     val -= gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
-                <Vector<R> as NumericVector>::max(val, <Vector<R> as NumericVector>::ZERO)
+                <V as NumericVector>::max(val, <V as NumericVector>::ZERO)
             }
             Curve::Blackbody { temperature, boost } => {
                 let bbd = blackbody_v(*temperature, lambda);
                 if *boost == 0.0 {
                     bbd
                 } else {
-                    Vector::<R>::splat(*boost) * bbd
-                        / Vector::<R>::splat(blackbody(
+                    V::splat(*boost) * bbd
+                        /V::splat(blackbody(
                             *temperature,
                             max_blackbody_lambda(*temperature),
                         ))
@@ -626,11 +603,11 @@ where
         }
     }
 
-    fn evaluate_clamped(&self, lambda: Vector<R>) -> Vector<R> {
-        <Vector<R> as NumericVector>::clamp(
+    fn evaluate_clamped(&self, lambda: V) ->V {
+        <V as NumericVector>::clamp(
             self.evaluate_power(lambda),
-            <Vector<R> as NumericVector>::ZERO,
-            <Vector<R> as NumericVector>::ONE,
+            <V as NumericVector>::ZERO,
+            <V as NumericVector>::ONE,
         )
     }
 
@@ -638,11 +615,11 @@ where
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
+    ) -> (HeroWavelength<R>, PDF<V, Length>) {
         let ws = HeroWavelength::<R>::new_from_range(sample.x, wavelength_range);
         (
             ws.replace_energy(self.evaluate_power(ws.lambda)),
-            PDF::new(Vector::<R>::splat(1.0 / wavelength_range.span())),
+            PDF::new(V::splat(1.0 / wavelength_range.span())),
         )
     }
 }

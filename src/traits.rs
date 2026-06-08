@@ -326,26 +326,9 @@ impl CheckInf for f32x4 {
     }
 }
 
-pub trait Field:
-    Add<Output = Self>
-    + AddAssign
-    + Mul<Output = Self>
-    + MulAssign
-    + Neg<Output = Self>
-    + Div<Output = Self>
-    + Abs
-    + Clone
-    + Copy
-    + PartialEq
-    + TotalPartialOrd
-    + CheckInf
-    + CheckNAN
-    + Debug
-{
+pub trait Field: FloatVector + CheckInf + CheckNAN + Debug {
     // trait bound to represent data types that can be integrated over.
     // examples would include f32 and f32x4
-    const ZERO: Self;
-    const ONE: Self;
     fn min(&self, other: Self) -> Self;
     fn max(&self, other: Self) -> Self;
 }
@@ -368,60 +351,6 @@ pub trait FromScalar<S: Scalar> {
     fn from_scalar(v: S) -> Self;
 }
 
-impl Field for f32 {
-    const ONE: Self = 1.0;
-    const ZERO: Self = 0.0;
-    #[inline(always)]
-    fn max(&self, other: Self) -> Self {
-        f32::max(*self, other)
-    }
-    #[inline(always)]
-    fn min(&self, other: Self) -> Self {
-        f32::max(*self, other)
-    }
-}
-impl Scalar for f32 {}
-
-impl Field for f32x4 {
-    const ONE: Self = f32x4::from_array([1.0, 1.0, 1.0, 1.0]);
-    const ZERO: Self = f32x4::from_array([0.0, 0.0, 0.0, 0.0]);
-    #[inline(always)]
-    fn max(&self, other: Self) -> Self {
-        f32x4::simd_max(*self, other)
-    }
-    #[inline(always)]
-    fn min(&self, other: Self) -> Self {
-        f32x4::simd_min(*self, other)
-    }
-}
-
-impl ToScalar<f32> for f32x4 {
-    #[inline(always)]
-    fn to_scalar(&self) -> f32 {
-        self[0]
-    }
-}
-impl ToScalar<f32> for f32 {
-    // noop
-    #[inline(always)]
-    fn to_scalar(&self) -> f32 {
-        *self
-    }
-}
-
-impl FromScalar<f32> for f32x4 {
-    #[inline(always)]
-    fn from_scalar(v: f32) -> f32x4 {
-        f32x4::splat(v)
-    }
-}
-impl FromScalar<f32> for f32 {
-    // noop
-    #[inline(always)]
-    fn from_scalar(v: f32) -> f32 {
-        v
-    }
-}
 
 // ===========================================================================
 // Thermite bridge: blanket impls of our local traits over thermite's vector
@@ -489,8 +418,6 @@ impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
 }
 
 impl<R: thermite::register::FloatRegister> Field for Vector<R> {
-    const ZERO: Self = <Self as NumericVector>::ZERO;
-    const ONE: Self = <Self as NumericVector>::ONE;
     #[inline(always)]
     fn min(&self, other: Self) -> Self {
         <Self as NumericVector>::min(*self, other)
@@ -501,19 +428,6 @@ impl<R: thermite::register::FloatRegister> Field for Vector<R> {
     }
 }
 
-impl<R: thermite::register::FloatRegister<Element = f32>> ToScalar<f32> for Vector<R> {
-    #[inline(always)]
-    fn to_scalar(&self) -> f32 {
-        self.extract::<0>()
-    }
-}
-
-impl<R: thermite::register::FloatRegister<Element = f32>> FromScalar<f32> for Vector<R> {
-    #[inline(always)]
-    fn from_scalar(v: f32) -> Self {
-        Self::splat(v)
-    }
-}
 
 #[cfg(test)]
 mod test {
@@ -546,9 +460,9 @@ mod test {
     fn solidangle_measure() {
         type TestS = thermite::backend::scalar::Scalar;
         let e: Vec3<TestS> = Vec3::new(1.0, 1.0, 1.0).normalized();
-        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(e.as_array()[..3]
-            .try_into()
-            .unwrap());
+        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(
+            e.as_array()[..3].try_into().unwrap(),
+        );
         println!("d_mu is {}", d_mu);
 
         let uv = direction_to_uv(e);
