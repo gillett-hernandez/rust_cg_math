@@ -5,20 +5,25 @@ pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);
 pub const BOUNDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(380.0, 780.0);
 
 pub type SingleWavelength = WavelengthEnergy<f32, f32>;
-/// Hero wavelength bundle, parameterized by an inner thermite::Vector type V
-pub type HeroWavelength<V> = WavelengthEnergy<V, V>;
+/// Hero wavelength bundle, parameterized by a thermite f32 float register `R`.
+/// Replaces the old `f32x4`-hardcoded alias — callers pick the width by
+/// choosing `R` (e.g. `<X86V3 as FloatSimd<f32>>::fxN` for native).
+pub type HeroWavelength<R> = WavelengthEnergy<Vector<R>, Vector<R>>;
 
+#[inline(always)]
 pub fn x_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 1.056, 5998.0, 379.0, 310.0)
         + gaussian(angstroms.into(), 0.362, 4420.0, 160.0, 267.0)
         + gaussian(angstroms.into(), -0.065, 5011.0, 204.0, 262.0)) as f32
 }
 
+#[inline(always)]
 pub fn y_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 0.821, 5688.0, 469.0, 405.0)
         + gaussian(angstroms.into(), 0.286, 5309.0, 163.0, 311.0)) as f32
 }
 
+#[inline(always)]
 pub fn z_bar(angstroms: f32) -> f32 {
     (gaussian(angstroms.into(), 1.217, 4370.0, 118.0, 360.0)
         + gaussian(angstroms.into(), 0.681, 4590.0, 260.0, 138.0)) as f32
@@ -26,6 +31,7 @@ pub fn z_bar(angstroms: f32) -> f32 {
 
 /// Vector form of the CIE X-bar observer fit. Generic across thermite f32
 /// float vectors. Replaces the simdfloat_patch-gated `x_bar_f32x4`.
+#[inline(always)]
 pub fn x_bar_v<V>(angstroms: V) -> V
 where
     V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
@@ -35,6 +41,7 @@ where
         + gaussian_v(angstroms, -0.065, 5011.0, 204.0, 262.0)
 }
 
+#[inline(always)]
 pub fn y_bar_v<V>(angstroms: V) -> V
 where
     V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
@@ -43,6 +50,7 @@ where
         + gaussian_v(angstroms, 0.286, 5309.0, 163.0, 311.0)
 }
 
+#[inline(always)]
 pub fn z_bar_v<V>(angstroms: V) -> V
 where
     V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
@@ -54,6 +62,7 @@ where
 // traits
 
 pub trait WavelengthEnergyTrait<L: Field, E: Field> {
+    #[inline(always)]
     fn new(lambda: L, energy: E) -> WavelengthEnergy<L, E> {
         WavelengthEnergy { lambda, energy }
     }
@@ -68,12 +77,14 @@ pub struct WavelengthEnergy<L: Field, E: Field> {
 }
 
 impl<L: Field, E: Field> WavelengthEnergy<L, E> {
+    #[inline(always)]
     pub fn replace_energy(self, e: E) -> Self {
         Self { energy: e, ..self }
     }
 }
 
 impl<S: thermite::simd::Simd> From<WavelengthEnergy<f32, f32>> for XYZColor<S> {
+    #[inline(always)]
     fn from(we: WavelengthEnergy<f32, f32>) -> Self {
         let angstroms = we.lambda * 10.0;
         XYZColor::new(
@@ -93,6 +104,7 @@ where
     S: thermite::simd::Simd,
     Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
 {
+    #[inline(always)]
     fn from(we: WavelengthEnergy<Vector<R>, Vector<R>>) -> Self {
         let angstroms = we.lambda * Vector::<R>::splat(10.0);
         XYZColor::new(
@@ -104,6 +116,7 @@ where
 }
 
 impl WavelengthEnergyTrait<f32, f32> for WavelengthEnergy<f32, f32> {
+    #[inline(always)]
     fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<f32, f32> {
         WavelengthEnergy {
             lambda: bounds.lower + sample * bounds.span(),
@@ -121,6 +134,7 @@ where
     R: thermite::register::FloatRegister<Element = f32>,
     Vector<R>: FloatVector<Element = f32>,
 {
+    #[inline(always)]
     fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<Vector<R>, Vector<R>> {
         let lanes = Vector::<R>::LANES as f32;
         let hero = sample * bounds.span();

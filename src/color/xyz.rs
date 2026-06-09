@@ -9,11 +9,13 @@ pub struct XYZColor<S: Simd>(pub Vector<S::f32x4>);
 
 impl<S: Simd> Copy for XYZColor<S> {}
 impl<S: Simd> Clone for XYZColor<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> std::fmt::Debug for XYZColor<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("XYZColor")
             .field(&self.x())
@@ -24,15 +26,19 @@ impl<S: Simd> std::fmt::Debug for XYZColor<S> {
 }
 
 impl<S: Simd> XYZColor<S> {
+    #[inline(always)]
     pub fn new(x: f32, y: f32, z: f32) -> XYZColor<S> {
         XYZColor(Vector::<S::f32x4>::new([x, y, z, 0.0]))
     }
+    #[inline(always)]
     pub fn from_raw(v: Vector<S::f32x4>) -> XYZColor<S> {
         XYZColor(v)
     }
+    #[inline(always)]
     pub fn black() -> XYZColor<S> {
         XYZColor(<Vector<S::f32x4> as NumericVector>::ZERO)
     }
+    #[inline(always)]
     pub fn zero() -> XYZColor<S> {
         Self::black()
     }
@@ -55,6 +61,7 @@ impl<S: Simd> XYZColor<S> {
 
 impl<S: Simd> Mul<f32> for XYZColor<S> {
     type Output = XYZColor<S>;
+    #[inline(always)]
     fn mul(self, other: f32) -> XYZColor<S> {
         XYZColor::from_raw(self.0 * Vector::<S::f32x4>::splat(other))
     }
@@ -62,6 +69,7 @@ impl<S: Simd> Mul<f32> for XYZColor<S> {
 
 impl<S: Simd> Mul<XYZColor<S>> for f32 {
     type Output = XYZColor<S>;
+    #[inline(always)]
     fn mul(self, other: XYZColor<S>) -> XYZColor<S> {
         other * self
     }
@@ -69,12 +77,14 @@ impl<S: Simd> Mul<XYZColor<S>> for f32 {
 
 impl<S: Simd> Div<f32> for XYZColor<S> {
     type Output = XYZColor<S>;
+    #[inline(always)]
     fn div(self, other: f32) -> XYZColor<S> {
         XYZColor::from_raw(self.0 / Vector::<S::f32x4>::splat(other))
     }
 }
 
 impl<S: Simd> DivAssign<f32> for XYZColor<S> {
+    #[inline(always)]
     fn div_assign(&mut self, other: f32) {
         self.0 = self.0 / Vector::<S::f32x4>::splat(other);
     }
@@ -82,18 +92,21 @@ impl<S: Simd> DivAssign<f32> for XYZColor<S> {
 
 impl<S: Simd> Add for XYZColor<S> {
     type Output = XYZColor<S>;
+    #[inline(always)]
     fn add(self, other: XYZColor<S>) -> XYZColor<S> {
         XYZColor::from_raw(self.0 + other.0)
     }
 }
 
 impl<S: Simd> AddAssign for XYZColor<S> {
+    #[inline(always)]
     fn add_assign(&mut self, other: XYZColor<S>) {
         self.0 = self.0 + other.0;
     }
 }
 
 impl<S: Simd> From<XYZColor<S>> for Vector<S::f32x4> {
+    #[inline(always)]
     fn from(v: XYZColor<S>) -> Vector<S::f32x4> {
         v.0
     }

@@ -10,22 +10,26 @@ pub struct Matrix4x4<S: Simd>(pub [Vector<S::f32x4>; 4]);
 
 impl<S: Simd> Copy for Matrix4x4<S> {}
 impl<S: Simd> Clone for Matrix4x4<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> PartialEq for Matrix4x4<S> {
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 impl<S: Simd> std::fmt::Debug for Matrix4x4<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Matrix4x4").field(&self.as_array()).finish()
     }
 }
 
 impl<S: Simd> Matrix4x4<S> {
+    #[inline(always)]
     pub fn identity() -> Matrix4x4<S> {
         Matrix4x4([
             Vector::<S::f32x4>::new([1.0, 0.0, 0.0, 0.0]),
@@ -36,6 +40,7 @@ impl<S: Simd> Matrix4x4<S> {
     }
 
     /// Column-major flat layout: `out[col * 4 + row] = m[row][col]`.
+    #[inline(always)]
     pub fn as_array(&self) -> [f32; 16] {
         let mut out = [0.0_f32; 16];
         for c in 0..4 {
@@ -48,6 +53,7 @@ impl<S: Simd> Matrix4x4<S> {
         out
     }
 
+    #[inline(always)]
     pub fn from_array(values: [f32; 16]) -> Self {
         Matrix4x4([
             Vector::<S::f32x4>::new([values[0], values[1], values[2], values[3]]),
@@ -62,6 +68,7 @@ impl<S: Simd> Matrix4x4<S>
 where
     S::f32x4: LinAlg4Register,
 {
+    #[inline(always)]
     pub fn transpose(&self) -> Matrix4x4<S> {
         Matrix4x4(<Vector<S::f32x4> as LinAlg4Vector>::mat4_transpose(&self.0))
     }
@@ -84,6 +91,7 @@ impl<S: Simd> Matrix4x4<S> {
     /// data movement costs more than straight-line scalar FMAs save, so the
     /// compiler-optimized scalar version below is the fastest portable option.
     /// See `benches/math_benches.rs::mat4_try_inverse`.
+    #[inline(always)]
     pub fn try_inverse(&self) -> Option<Matrix4x4<S>> {
         // Row-major flat view: `m[row * 4 + col]`. (as_array() is column-major,
         // so transpose the indexing here.) Cofactor formula is written against
@@ -165,6 +173,7 @@ where
     S::f32x4: LinAlg4Register,
 {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn mul(self, rhs: Vec3<S>) -> Self::Output {
         // Vec3 has w=0, so mat4_vec3_product is the appropriate primitive —
         // it skips the translation column and avoids the homogenization step.
@@ -178,6 +187,7 @@ where
     S::f32x4: LinAlg4Register,
 {
     type Output = Point3<S>;
+    #[inline(always)]
     fn mul(self, rhs: Point3<S>) -> Self::Output {
         // Point3 has w=1, so mat4_vec4_product applies the full 4x4 (including
         // the translation column). `normalize()` divides by the resulting w to
@@ -191,6 +201,7 @@ where
     S::f32x4: LinAlg3Register + LinAlg4Register,
 {
     type Output = Ray<S>;
+    #[inline(always)]
     fn mul(self, rhs: Ray<S>) -> Self::Output {
         Ray {
             origin: self * rhs.origin,
@@ -205,6 +216,7 @@ where
     S::f32x4: LinAlg4Register,
 {
     type Output = Matrix4x4<S>;
+    #[inline(always)]
     fn mul(self, rhs: Matrix4x4<S>) -> Self::Output {
         Matrix4x4(<Vector<S::f32x4> as LinAlg4Vector>::mat4_product::<true>(
             &self.0, &rhs.0,
@@ -219,16 +231,19 @@ pub struct Transform3<S: Simd> {
 
 impl<S: Simd> Copy for Transform3<S> {}
 impl<S: Simd> Clone for Transform3<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> PartialEq for Transform3<S> {
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.forward == other.forward && self.reverse == other.reverse
     }
 }
 impl<S: Simd> std::fmt::Debug for Transform3<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Transform3")
             .field("forward", &self.forward)
@@ -241,6 +256,7 @@ impl<S: Simd> Transform3<S>
 where
     S::f32x4: LinAlg4Register,
 {
+    #[inline(always)]
     pub fn new() -> Self {
         Transform3 {
             forward: Matrix4x4::identity(),
@@ -250,14 +266,17 @@ where
     /// Build a transform from an arbitrary forward matrix, computing the
     /// reverse via a general 4x4 inverse. Returns `None` if `forward` is
     /// singular.
+    #[inline(always)]
     pub fn new_from_matrix(forward: Matrix4x4<S>) -> Option<Self> {
         forward.try_inverse().map(|reverse| Transform3 { forward, reverse })
     }
 
+    #[inline(always)]
     pub fn inverse(self) -> Transform3<S> {
         Transform3::new_from_raw(self.reverse, self.forward)
     }
 
+    #[inline(always)]
     pub fn from_translation(shift: Vec3<S>) -> Self {
         let (tx, ty, tz) = (shift.x(), shift.y(), shift.z());
         // Affine translation: inverse is translation by the negated shift.
@@ -277,6 +296,7 @@ where
         Transform3::new_from_raw(forward, reverse)
     }
 
+    #[inline(always)]
     pub fn from_scale(scale: Vec3<S>) -> Self {
         let (sx, sy, sz) = (scale.x(), scale.y(), scale.z());
         // Diagonal scale: inverse is the reciprocal scale.
@@ -298,6 +318,7 @@ where
     /// Rotation about a (unit-length) `axis` by `radians`, via Rodrigues'
     /// formula. The inverse of an orthonormal rotation is its transpose, so the
     /// reverse matrix is built directly without a general inversion.
+    #[inline(always)]
     pub fn from_axis_angle(axis: Vec3<S>, radians: f32) -> Self {
         let (x, y, z) = (axis.x(), axis.y(), axis.z());
         let c = radians.cos();
@@ -332,6 +353,7 @@ where
         Transform3::new_from_raw(forward, reverse)
     }
 
+    #[inline(always)]
     pub fn from_stack(
         scale: Option<Transform3<S>>,
         rotate: Option<Transform3<S>>,
@@ -350,10 +372,12 @@ where
         stack
     }
 
+    #[inline(always)]
     pub fn new_from_raw(forward: Matrix4x4<S>, reverse: Matrix4x4<S>) -> Self {
         Transform3 { forward, reverse }
     }
 
+    #[inline(always)]
     pub fn from_vector_stack(
         v0: Vector<S::f32x4>,
         v1: Vector<S::f32x4>,
@@ -377,6 +401,7 @@ where
         Transform3::new_from_raw(m.transpose(), m)
     }
 
+    #[inline(always)]
     pub fn axis_transform(&self) -> (Vec3<S>, Vec3<S>, Vec3<S>) {
         (
             self.to_world(Vec3::x_axis()),
@@ -385,12 +410,14 @@ where
         )
     }
 
+    #[inline(always)]
     pub fn to_local<T>(&self, value: T) -> <Matrix4x4<S> as Mul<T>>::Output
     where
         Matrix4x4<S>: Mul<T>,
     {
         self.reverse * value
     }
+    #[inline(always)]
     pub fn to_world<T>(&self, value: T) -> <Matrix4x4<S> as Mul<T>>::Output
     where
         Matrix4x4<S>: Mul<T>,
@@ -403,6 +430,7 @@ impl<S: Simd> From<TangentFrame<S>> for Transform3<S>
 where
     S::f32x4: LinAlg3Register + LinAlg4Register,
 {
+    #[inline(always)]
     fn from(value: TangentFrame<S>) -> Self {
         Transform3::from_vector_stack(value.tangent.0, value.bitangent.0, value.normal.0)
     }
@@ -413,6 +441,7 @@ where
     S::f32x4: LinAlg4Register,
 {
     type Output = Transform3<S>;
+    #[inline(always)]
     fn mul(self, rhs: Transform3<S>) -> Self::Output {
         Transform3::new_from_raw(rhs.forward * self.forward, self.reverse * rhs.reverse)
     }

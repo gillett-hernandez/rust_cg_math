@@ -2,11 +2,13 @@ use crate::prelude::*;
 use thermite::simd::Simd;
 use thermite::register::LinAlg3Register;
 
+#[inline(always)]
 pub fn debug_random() -> f32 {
     rand::random()
 }
 
 /// Uniformly distributed wrt the volume measure on the unit ball.
+#[inline(always)]
 pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
     let u = r.x * PI * 2.0;
     let v = (2.0 * r.y - 1.0).acos();
@@ -15,6 +17,7 @@ pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
 }
 
 /// Uniformly distributed wrt the surface area / solid angle measure.
+#[inline(always)]
 pub fn random_on_unit_sphere<S: Simd>(r: Sample2D) -> Vec3<S> {
     let Sample2D { x, y } = r;
 
@@ -28,6 +31,7 @@ pub fn random_on_unit_sphere<S: Simd>(r: Sample2D) -> Vec3<S> {
 }
 
 /// Uniformly distributed wrt the area measure on the unit disk.
+#[inline(always)]
 pub fn random_in_unit_disk<S: Simd>(r: Sample2D) -> Vec3<S> {
     let u: f32 = r.x * PI * 2.0;
     let v: f32 = r.y.powf(1.0 / 2.0);
@@ -35,6 +39,7 @@ pub fn random_in_unit_disk<S: Simd>(r: Sample2D) -> Vec3<S> {
 }
 
 /// Cosine-weighted hemisphere direction. Uniform wrt projected solid angle.
+#[inline(always)]
 pub fn random_cosine_direction<S: Simd>(r: Sample2D) -> Vec3<S> {
     let Sample2D { x: u, y: v } = r;
     let z: f32 = (1.0 - v).sqrt();
@@ -46,6 +51,7 @@ pub fn random_cosine_direction<S: Simd>(r: Sample2D) -> Vec3<S> {
     Vec3::new(x, y, z)
 }
 
+#[inline(always)]
 pub fn weighted_cosine_direction<S: Simd>(r: Sample2D, weight: f32) -> Vec3<S>
 where
     S::f32x4: LinAlg3Register,
@@ -59,6 +65,7 @@ where
     Vec3::new(x, y, z).normalized()
 }
 
+#[inline(always)]
 pub fn random_to_sphere<S: Simd>(r: Sample2D, radius: f32, distance_squared: f32) -> Vec3<S> {
     let r1 = r.x;
     let r2 = r.y;

@@ -9,16 +9,19 @@ pub struct Point3<S: Simd>(pub Vector<S::f32x4>);
 
 impl<S: Simd> Copy for Point3<S> {}
 impl<S: Simd> Clone for Point3<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> PartialEq for Point3<S> {
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 impl<S: Simd> std::fmt::Debug for Point3<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("Point3")
             .field(&self.x())
@@ -29,21 +32,27 @@ impl<S: Simd> std::fmt::Debug for Point3<S> {
 }
 
 impl<S: Simd> Point3<S> {
+    #[inline(always)]
     pub fn new(x: f32, y: f32, z: f32) -> Point3<S> {
         Point3(Vector::<S::f32x4>::new([x, y, z, 1.0]))
     }
+    #[inline(always)]
     pub fn origin() -> Point3<S> {
         Point3::new(0.0, 0.0, 0.0)
     }
+    #[inline(always)]
     pub fn zero() -> Point3<S> {
         Point3::new(0.0, 0.0, 0.0)
     }
+    #[inline(always)]
     pub fn infinity() -> Point3<S> {
         Point3::new(INFINITY, INFINITY, INFINITY)
     }
+    #[inline(always)]
     pub fn neg_infinity() -> Point3<S> {
         Point3::new(-INFINITY, -INFINITY, -INFINITY)
     }
+    #[inline(always)]
     pub fn is_finite(&self) -> bool {
         let nan = <Vector<S::f32x4> as FloatVector>::is_nan(self.0);
         let inf = <Vector<S::f32x4> as FloatVector>::is_infinite(self.0);
@@ -69,17 +78,20 @@ impl<S: Simd> Point3<S> {
         self.0.extract::<3>()
     }
     /// Divide by w so the point is at w=1. No-op if already there.
+    #[inline(always)]
     pub fn normalize(mut self) -> Self {
         let w = self.w();
         self.0 = self.0 / Vector::<S::f32x4>::splat(w);
         self
     }
+    #[inline(always)]
     pub fn as_array(&self) -> [f32; 4] {
         [self.x(), self.y(), self.z(), self.w()]
     }
 }
 
 impl<S: Simd> Default for Point3<S> {
+    #[inline(always)]
     fn default() -> Self {
         Point3::origin()
     }
@@ -87,12 +99,14 @@ impl<S: Simd> Default for Point3<S> {
 
 impl<S: Simd> Add<Vec3<S>> for Point3<S> {
     type Output = Point3<S>;
+    #[inline(always)]
     fn add(self, other: Vec3<S>) -> Point3<S> {
         Point3(self.0 + other.0)
     }
 }
 
 impl<S: Simd> AddAssign<Vec3<S>> for Point3<S> {
+    #[inline(always)]
     fn add_assign(&mut self, other: Vec3<S>) {
         self.0 += other.0;
     }
@@ -100,12 +114,14 @@ impl<S: Simd> AddAssign<Vec3<S>> for Point3<S> {
 
 impl<S: Simd> Sub<Vec3<S>> for Point3<S> {
     type Output = Point3<S>;
+    #[inline(always)]
     fn sub(self, other: Vec3<S>) -> Point3<S> {
         Point3(self.0 - other.0)
     }
 }
 
 impl<S: Simd> SubAssign<Vec3<S>> for Point3<S> {
+    #[inline(always)]
     fn sub_assign(&mut self, other: Vec3<S>) {
         self.0 -= other.0;
     }
@@ -116,6 +132,7 @@ where
     S::f32x4: LinAlg3Register,
 {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn sub(self, other: Point3<S>) -> Vec3<S> {
         // Subtracting two w=1 points yields w=0 (vector). zero4() makes that
         // explicit even if w lanes accumulated FP noise.
@@ -124,12 +141,14 @@ where
 }
 
 impl<S: Simd> From<[f32; 3]> for Point3<S> {
+    #[inline(always)]
     fn from(other: [f32; 3]) -> Point3<S> {
         Point3::new(other[0], other[1], other[2])
     }
 }
 
 impl<S: Simd> From<Vector<S::f32x4>> for Point3<S> {
+    #[inline(always)]
     fn from(other: Vector<S::f32x4>) -> Point3<S> {
         Point3(other)
     }
@@ -139,6 +158,7 @@ impl<S: Simd> From<Vec3<S>> for Point3<S>
 where
     S::f32x4: LinAlg3Register,
 {
+    #[inline(always)]
     fn from(v: Vec3<S>) -> Point3<S> {
         // Force lane 4 to 1.0.
         Point3(v.0.one4())
@@ -149,6 +169,7 @@ impl<S: Simd> From<Point3<S>> for Vec3<S>
 where
     S::f32x4: LinAlg3Register,
 {
+    #[inline(always)]
     fn from(p: Point3<S>) -> Self {
         // Drop the w lane.
         Vec3(p.0.zero4())

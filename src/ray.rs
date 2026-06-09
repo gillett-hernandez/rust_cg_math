@@ -11,11 +11,13 @@ pub struct Ray<S: Simd> {
 
 impl<S: Simd> Copy for Ray<S> {}
 impl<S: Simd> Clone for Ray<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> std::fmt::Debug for Ray<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Ray")
             .field("origin", &self.origin)
@@ -27,6 +29,7 @@ impl<S: Simd> std::fmt::Debug for Ray<S> {
 }
 
 impl<S: Simd> Ray<S> {
+    #[inline(always)]
     pub const fn new(origin: Point3<S>, direction: Vec3<S>) -> Self {
         Ray {
             origin,
@@ -36,6 +39,7 @@ impl<S: Simd> Ray<S> {
         }
     }
 
+    #[inline(always)]
     pub const fn new_with_time(origin: Point3<S>, direction: Vec3<S>, time: f32) -> Self {
         Ray {
             origin,
@@ -44,6 +48,7 @@ impl<S: Simd> Ray<S> {
             tmax: INFINITY,
         }
     }
+    #[inline(always)]
     pub const fn new_with_time_and_tmax(
         origin: Point3<S>,
         direction: Vec3<S>,
@@ -57,6 +62,7 @@ impl<S: Simd> Ray<S> {
             tmax,
         }
     }
+    #[inline(always)]
     pub fn with_tmax(mut self, tmax: f32) -> Self {
         self.tmax = tmax;
         self
@@ -67,16 +73,19 @@ impl<S: Simd> Ray<S>
 where
     S::f32x4: LinAlg3Register,
 {
+    #[inline(always)]
     pub fn at_time(mut self, time: f32) -> Self {
         self.origin = self.point_at_parameter(time);
         self
     }
+    #[inline(always)]
     pub fn point_at_parameter(self, time: f32) -> Point3<S> {
         self.origin + self.direction * time
     }
 }
 
 impl<S: Simd> Default for Ray<S> {
+    #[inline(always)]
     fn default() -> Self {
         Ray::new(Point3::default(), Vec3::default())
     }

@@ -33,15 +33,18 @@ pub struct ProductMeasure<A: Measure, B: Measure> {
 impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
     type Space = ProductSet<A::Space, B::Space>;
 
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         A::measure(set.0) * B::measure(set.1)
     }
+    #[inline(always)]
     fn differential_measure(element: Element<Self::Space>) -> f32 {
         A::differential_measure(element.0) * B::differential_measure(element.1)
     }
 }
 
 /* pub trait PDF: Measure {
+    #[inline(always)]
     fn verify() -> bool {
         let space = <<Self as Measure>::Space as SpaceParameterization>::SPACE;
         (Self::measure(space) - 1.0) < 0.0001
@@ -53,9 +56,11 @@ impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
 pub struct Length;
 impl Measure for Length {
     type Space = R;
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         set.span()
     }
+    #[inline(always)]
     fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
@@ -71,9 +76,11 @@ pub struct Angle;
 
 impl Measure for Angle {
     type Space = Circle;
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         set.span() % Self::Space::SPACE.span()
     }
+    #[inline(always)]
     fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
@@ -84,6 +91,7 @@ pub struct DiskAreaMeasure;
 impl Measure for DiskAreaMeasure {
     type Space = DiskSpace;
 
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         // set.0 is angle bounds and set.1 is radius bounds
 
@@ -94,6 +102,7 @@ impl Measure for DiskAreaMeasure {
             * (set.1.upper.powi(2) - set.1.lower.powi(2))
     }
 
+    #[inline(always)]
     fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1
     }
@@ -109,6 +118,7 @@ pub struct SolidAngle<P: SpaceParameterization>(PhantomData<P>);
 impl Measure for SolidAngle<SphericalCoordinates> {
     type Space = SphericalCoordinates;
 
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         let azimuthal = set.x.span();
         let Bounds1D {
@@ -121,6 +131,7 @@ impl Measure for SolidAngle<SphericalCoordinates> {
         (phi0.cos() - phi1.cos()) * azimuthal
     }
 
+    #[inline(always)]
     fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1.sin()
     }
@@ -128,9 +139,11 @@ impl Measure for SolidAngle<SphericalCoordinates> {
 
 impl Measure for SolidAngle<DirectionalSector> {
     type Space = DirectionalSector;
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         TAU * (1.0 - set.1.cos())
     }
+    #[inline(always)]
     fn differential_measure(_: Element<Self::Space>) -> f32 {
         1.0
     }
@@ -149,6 +162,7 @@ impl Measure for SolidAngle<DirectionalSector> {
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {
     type Space = SphericalCoordinates;
+    #[inline(always)]
     fn measure(set: SimpleSet<Self::Space>) -> f32 {
         let azimuthal = set.x.span();
         let phi_bounds = set.y;
@@ -169,6 +183,7 @@ impl Measure for ProjectedSolidAngle {
             0.25 * azimuthal * ((phi_bounds.lower * 2.0).cos() - (phi_bounds.upper * 2.0).cos())
         }
     }
+    #[inline(always)]
     fn differential_measure(element: Element<Self::Space>) -> f32 {
         element.1.cos().abs() * element.1.sin()
     }
@@ -187,6 +202,7 @@ pub type Throughput = ProductMeasure<Area, ProjectedSolidAngle>;
 pub struct PathThroughput<N: Unsigned>(PhantomData<N>);
 
 impl<N: Unsigned> Default for PathThroughput<N> {
+    #[inline(always)]
     fn default() -> Self {
         Self(PhantomData)
     }
@@ -197,6 +213,7 @@ where
     <N as Add>::Output: typenum::Unsigned,
 {
     type Output = PathThroughput<<N as Add>::Output>;
+    #[inline(always)]
     fn mul(self, _: Throughput) -> Self::Output {
         Self::Output::default()
     }
@@ -227,12 +244,14 @@ pub trait TotalPartialOrd {
 }
 
 impl TotalPartialOrd for f32 {
+    #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         PartialOrd::partial_cmp(self, other)
     }
 }
 
 impl TotalPartialOrd for f32x4 {
+    #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if self.eq(other) {
             Some(Ordering::Equal)
@@ -263,6 +282,7 @@ pub enum CheckResult {
 }
 
 impl CheckResult {
+    #[inline(always)]
     pub fn coerce(self, middle_destination: bool) -> bool {
         match self {
             CheckResult::All => true,
@@ -281,6 +301,7 @@ pub trait CheckInf {
 }
 
 impl CheckNAN for f32 {
+    #[inline(always)]
     fn check_nan(&self) -> CheckResult {
         if self.is_nan() {
             CheckResult::All
@@ -291,6 +312,7 @@ impl CheckNAN for f32 {
 }
 
 impl CheckNAN for f32x4 {
+    #[inline(always)]
     fn check_nan(&self) -> CheckResult {
         let mask = self.is_nan();
         if mask.all() {
@@ -304,6 +326,7 @@ impl CheckNAN for f32x4 {
 }
 
 impl CheckInf for f32 {
+    #[inline(always)]
     fn check_inf(&self) -> CheckResult {
         if self.is_infinite() {
             CheckResult::All
@@ -314,6 +337,7 @@ impl CheckInf for f32 {
 }
 
 impl CheckInf for f32x4 {
+    #[inline(always)]
     fn check_inf(&self) -> CheckResult {
         let mask = self.is_infinite();
         if mask.all() {
@@ -326,9 +350,26 @@ impl CheckInf for f32x4 {
     }
 }
 
-pub trait Field: FloatVector + CheckInf + CheckNAN + Debug {
+pub trait Field:
+    Add<Output = Self>
+    + AddAssign
+    + Mul<Output = Self>
+    + MulAssign
+    + Neg<Output = Self>
+    + Div<Output = Self>
+    + Abs
+    + Clone
+    + Copy
+    + PartialEq
+    + TotalPartialOrd
+    + CheckInf
+    + CheckNAN
+    + Debug
+{
     // trait bound to represent data types that can be integrated over.
     // examples would include f32 and f32x4
+    const ZERO: Self;
+    const ONE: Self;
     fn min(&self, other: Self) -> Self;
     fn max(&self, other: Self) -> Self;
 }
@@ -351,6 +392,60 @@ pub trait FromScalar<S: Scalar> {
     fn from_scalar(v: S) -> Self;
 }
 
+impl Field for f32 {
+    const ONE: Self = 1.0;
+    const ZERO: Self = 0.0;
+    #[inline(always)]
+    fn max(&self, other: Self) -> Self {
+        f32::max(*self, other)
+    }
+    #[inline(always)]
+    fn min(&self, other: Self) -> Self {
+        f32::max(*self, other)
+    }
+}
+impl Scalar for f32 {}
+
+impl Field for f32x4 {
+    const ONE: Self = f32x4::from_array([1.0, 1.0, 1.0, 1.0]);
+    const ZERO: Self = f32x4::from_array([0.0, 0.0, 0.0, 0.0]);
+    #[inline(always)]
+    fn max(&self, other: Self) -> Self {
+        f32x4::simd_max(*self, other)
+    }
+    #[inline(always)]
+    fn min(&self, other: Self) -> Self {
+        f32x4::simd_min(*self, other)
+    }
+}
+
+impl ToScalar<f32> for f32x4 {
+    #[inline(always)]
+    fn to_scalar(&self) -> f32 {
+        self[0]
+    }
+}
+impl ToScalar<f32> for f32 {
+    // noop
+    #[inline(always)]
+    fn to_scalar(&self) -> f32 {
+        *self
+    }
+}
+
+impl FromScalar<f32> for f32x4 {
+    #[inline(always)]
+    fn from_scalar(v: f32) -> f32x4 {
+        f32x4::splat(v)
+    }
+}
+impl FromScalar<f32> for f32 {
+    // noop
+    #[inline(always)]
+    fn from_scalar(v: f32) -> f32 {
+        v
+    }
+}
 
 // ===========================================================================
 // Thermite bridge: blanket impls of our local traits over thermite's vector
@@ -378,6 +473,7 @@ impl<R: thermite::register::SignedRegister> Abs for Vector<R> {
 }
 
 impl<R: thermite::register::FloatRegister> CheckNAN for Vector<R> {
+    #[inline(always)]
     fn check_nan(&self) -> CheckResult {
         let mask = <Self as FloatVector>::is_nan(*self);
         if mask.all() {
@@ -391,6 +487,7 @@ impl<R: thermite::register::FloatRegister> CheckNAN for Vector<R> {
 }
 
 impl<R: thermite::register::FloatRegister> CheckInf for Vector<R> {
+    #[inline(always)]
     fn check_inf(&self) -> CheckResult {
         let mask = <Self as FloatVector>::is_infinite(*self);
         if mask.all() {
@@ -404,6 +501,7 @@ impl<R: thermite::register::FloatRegister> CheckInf for Vector<R> {
 }
 
 impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
+    #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if *self == *other {
             Some(Ordering::Equal)
@@ -418,6 +516,8 @@ impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
 }
 
 impl<R: thermite::register::FloatRegister> Field for Vector<R> {
+    const ZERO: Self = <Vector<R> as NumericVector>::ZERO;
+    const ONE: Self = <Vector<R> as NumericVector>::ONE;
     #[inline(always)]
     fn min(&self, other: Self) -> Self {
         <Self as NumericVector>::min(*self, other)
@@ -427,7 +527,6 @@ impl<R: thermite::register::FloatRegister> Field for Vector<R> {
         <Self as NumericVector>::max(*self, other)
     }
 }
-
 
 #[cfg(test)]
 mod test {

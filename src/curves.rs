@@ -90,6 +90,7 @@ pub enum Curve {
 }
 
 impl Default for Curve {
+    #[inline(always)]
     fn default() -> Self {
         Curve::Const(0.0)
     }
@@ -113,12 +114,14 @@ impl Default for Curve {
 // }
 
 impl Curve {
+    #[inline(always)]
     pub fn y_bar() -> Curve {
         Curve::Exponential {
             signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
         }
     }
 
+    #[inline(always)]
     pub fn from_function<F>(
         mut func: F,
         samples: usize,
@@ -143,6 +146,7 @@ impl Curve {
         }
     }
 
+    #[inline(always)]
     pub fn evaluate(&self, x: f32) -> f32 {
         match &self {
             Curve::Const(v) => v.max(0.0),
@@ -274,6 +278,7 @@ impl Curve {
         }
     }
 
+    #[inline(always)]
     pub fn to_cdf(&self, bounds: Bounds1D, resolution: usize) -> CurveWithCDF {
         // resolution is ignored if Curve variant is `Linear`
         match &self {
@@ -332,6 +337,7 @@ impl Curve {
         }
     }
 
+    #[inline(always)]
     pub fn evaluate_integral(
         &self,
         integration_bounds: Bounds1D,
@@ -508,6 +514,7 @@ impl Curve {
             }
         }
     }
+    #[inline(always)]
     pub fn convert_to_xyz<S: thermite::simd::Simd>(
         &self,
         integration_bounds: Bounds1D,
@@ -535,6 +542,32 @@ impl Curve {
     }
 }
 
+impl SpectralPowerDistributionFunction<f32> for Curve {
+    #[inline(always)]
+    fn evaluate_power(&self, lambda: f32) -> f32 {
+        self.evaluate(lambda).max(0.0)
+    }
+    #[inline(always)]
+    fn evaluate_clamped(&self, lambda: f32) -> f32 {
+        self.evaluate(lambda).clamp(0.0, ONE_SUB_EPSILON)
+    }
+    #[inline(always)]
+    fn sample_power_and_pdf(
+        &self,
+        wavelength_range: Bounds1D,
+        sample: Sample1D,
+    ) -> (SingleWavelength, PDF<f32, Length>) {
+        match &self {
+            _ => {
+                let ws = SingleWavelength::new_from_range(sample.x, wavelength_range);
+                (
+                    ws.replace_energy(self.evaluate(ws.lambda)),
+                    PDF::new(1.0 / wavelength_range.span()), // uniform distribution
+                )
+            }
+        }
+    }
+}
 
 /// Generic SIMD evaluator for `Curve`. Replaces the simdfloat_patch-gated
 /// `SpectralPowerDistributionFunction<f32x4> for Curve` and works across any
@@ -545,14 +578,15 @@ impl Curve {
 /// is scalarized on most CPUs anyway, so the simpler `map` path is close to
 /// equivalent in practice. A thermite-`gather_or` path can be added later if
 /// profiling shows it matters.
-#[thermite::dispatch(V)]
-impl<V> SpectralPowerDistributionFunction<V> for Curve
+impl<R> SpectralPowerDistributionFunction<Vector<R>> for Curve
 where
-    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+    R: thermite::register::FloatRegister<Element = f32>,
+    Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
 {
-    fn evaluate_power(&self, lambda: V) -> V {
+    #[inline(always)]
+    fn evaluate_power(&self, lambda: Vector<R>) -> Vector<R> {
         match self {
-            Curve::Const(v) => V::splat(v.max(0.0)),
+            Curve::Const(v) => Vector::<R>::splat(v.max(0.0)),
             Curve::Polynomial {
                 domain_range_mapping,
                 coefficients,
@@ -560,39 +594,40 @@ where
                 let [x0, xs, y0, ys]: [f32; 4] = *domain_range_mapping;
                 debug_assert!(xs > 0.0);
 
-                let x = (lambda - V::splat(x0)) /V::splat(xs);
-                let mut sum =V::splat(y0);
+                let x = (lambda - Vector::<R>::splat(x0)) / Vector::<R>::splat(xs);
+                let mut sum = Vector::<R>::splat(y0);
                 let mut xpow = x;
                 for i in 0..8 {
-                    sum += V::splat(coefficients[i]) * xpow;
+                    sum += Vector::<R>::splat(coefficients[i]) * xpow;
                     xpow *= x;
                 }
-                <V as NumericVector>::max(sum, <V as NumericVector>::ZERO) * V::splat(ys)
+                <Vector<R> as NumericVector>::max(sum, <Vector<R> as NumericVector>::ZERO)
+                    * Vector::<R>::splat(ys)
             }
             Curve::Cauchy { a, b } => {
-                V::splat(*a) + V::splat(*b) / (lambda * lambda)
+                Vector::<R>::splat(*a) + Vector::<R>::splat(*b) / (lambda * lambda)
             }
             Curve::Exponential { signal } => {
-                let mut val = <V as NumericVector>::ZERO;
+                let mut val = <Vector<R> as NumericVector>::ZERO;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
                     val += gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
                 val
             }
             Curve::InverseExponential { signal } => {
-                let mut val = <V as NumericVector>::ONE;
+                let mut val = <Vector<R> as NumericVector>::ONE;
                 for &(offset, sigma1, sigma2, multiplier) in signal {
                     val -= gaussian_v(lambda, multiplier, offset, sigma1, sigma2);
                 }
-                <V as NumericVector>::max(val, <V as NumericVector>::ZERO)
+                <Vector<R> as NumericVector>::max(val, <Vector<R> as NumericVector>::ZERO)
             }
             Curve::Blackbody { temperature, boost } => {
                 let bbd = blackbody_v(*temperature, lambda);
                 if *boost == 0.0 {
                     bbd
                 } else {
-                    V::splat(*boost) * bbd
-                        /V::splat(blackbody(
+                    Vector::<R>::splat(*boost) * bbd
+                        / Vector::<R>::splat(blackbody(
                             *temperature,
                             max_blackbody_lambda(*temperature),
                         ))
@@ -603,23 +638,25 @@ where
         }
     }
 
-    fn evaluate_clamped(&self, lambda: V) ->V {
-        <V as NumericVector>::clamp(
+    #[inline(always)]
+    fn evaluate_clamped(&self, lambda: Vector<R>) -> Vector<R> {
+        <Vector<R> as NumericVector>::clamp(
             self.evaluate_power(lambda),
-            <V as NumericVector>::ZERO,
-            <V as NumericVector>::ONE,
+            <Vector<R> as NumericVector>::ZERO,
+            <Vector<R> as NumericVector>::ONE,
         )
     }
 
+    #[inline(always)]
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (HeroWavelength<R>, PDF<V, Length>) {
+    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
         let ws = HeroWavelength::<R>::new_from_range(sample.x, wavelength_range);
         (
             ws.replace_energy(self.evaluate_power(ws.lambda)),
-            PDF::new(V::splat(1.0 / wavelength_range.span())),
+            PDF::new(Vector::<R>::splat(1.0 / wavelength_range.span())),
         )
     }
 }
@@ -637,12 +674,15 @@ pub struct CurveWithCDF {
 }
 
 impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
+    #[inline(always)]
     fn evaluate_power(&self, lambda: f32) -> f32 {
         self.pdf.evaluate(lambda)
     }
+    #[inline(always)]
     fn evaluate_clamped(&self, lambda: f32) -> f32 {
         self.pdf.evaluate_clamped(lambda)
     }
+    #[inline(always)]
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
@@ -738,12 +778,15 @@ where
     R: thermite::register::FloatRegister<Element = f32>,
     Vector<R>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
 {
+    #[inline(always)]
     fn evaluate_power(&self, lambda: Vector<R>) -> Vector<R> {
         self.pdf.evaluate_power(lambda)
     }
+    #[inline(always)]
     fn evaluate_clamped(&self, lambda: Vector<R>) -> Vector<R> {
         self.pdf.evaluate_clamped(lambda)
     }
+    #[inline(always)]
     fn sample_power_and_pdf(
         &self,
         wavelength_range: Bounds1D,
@@ -826,6 +869,7 @@ where
 // TODO: impl SPDF<f32x4> for CurveWithCDF and Curve
 /*
 
+#[inline(always)]
 fn sample_power_and_pdf(
     &self,
     wavelength_range: Bounds1D,
@@ -1145,8 +1189,11 @@ mod test {
         let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
 
         // pdf_integral should be positive and finite
-        assert!(cdf.pdf_integral.is_finite() && cdf.pdf_integral > 0.0,
-            "pdf_integral should be positive and finite: {}", cdf.pdf_integral);
+        assert!(
+            cdf.pdf_integral.is_finite() && cdf.pdf_integral > 0.0,
+            "pdf_integral should be positive and finite: {}",
+            cdf.pdf_integral
+        );
 
         // sampling should produce finite, positive energy values
         for _ in 0..100 {
@@ -1182,7 +1229,11 @@ mod test {
         }
         let estimate = s / n as f32;
         // estimate should be finite and positive for a positive curve
-        assert!(estimate.is_finite() && estimate > 0.0, "CDF3 estimate invalid: {}", estimate);
+        assert!(
+            estimate.is_finite() && estimate > 0.0,
+            "CDF3 estimate invalid: {}",
+            estimate
+        );
     }
 
     #[test]
@@ -1204,7 +1255,11 @@ mod test {
             s += we.energy / *pdf;
         }
         let estimate = s / n as f32;
-        assert!(estimate.is_finite() && estimate > 0.0, "CDF4 estimate invalid: {}", estimate);
+        assert!(
+            estimate.is_finite() && estimate > 0.0,
+            "CDF4 estimate invalid: {}",
+            estimate
+        );
     }
 
     #[test]

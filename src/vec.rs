@@ -25,22 +25,26 @@ pub struct Vec3<S: Simd>(pub Vector<S::f32x4>);
 // derive generates incorrect `S: Copy` bounds otherwise).
 impl<S: Simd> Copy for Vec3<S> {}
 impl<S: Simd> Clone for Vec3<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> PartialEq for Vec3<S> {
+    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 impl<S: Simd> Default for Vec3<S> {
+    #[inline(always)]
     fn default() -> Self {
         Self::ZERO
     }
 }
 
 impl<S: Simd> fmt::Debug for Vec3<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Vec3")
             .field(&self.x())
@@ -51,6 +55,7 @@ impl<S: Simd> fmt::Debug for Vec3<S> {
 }
 
 impl<S: Simd> Vec3<S> {
+    #[inline(always)]
     pub fn new(x: f32, y: f32, z: f32) -> Vec3<S> {
         Vec3(Vector::<S::f32x4>::new([x, y, z, 0.0]))
     }
@@ -63,16 +68,20 @@ impl<S: Simd> Vec3<S> {
         Vec3(<Vector<S::f32x4> as NumericVector>::ZERO)
     };
 
+    #[inline(always)]
     pub fn x_axis() -> Vec3<S> {
         Vec3::new(1.0, 0.0, 0.0)
     }
+    #[inline(always)]
     pub fn y_axis() -> Vec3<S> {
         Vec3::new(0.0, 1.0, 0.0)
     }
+    #[inline(always)]
     pub fn z_axis() -> Vec3<S> {
         Vec3::new(0.0, 0.0, 1.0)
     }
 
+    #[inline(always)]
     pub fn from_axis(axis: Axis) -> Vec3<S> {
         match axis {
             Axis::X => Vec3::x_axis(),
@@ -80,6 +89,7 @@ impl<S: Simd> Vec3<S> {
             Axis::Z => Vec3::z_axis(),
         }
     }
+    #[inline(always)]
     pub fn is_finite(&self) -> bool {
         let nan = <Vector<S::f32x4> as FloatVector>::is_nan(self.0);
         let inf = <Vector<S::f32x4> as FloatVector>::is_infinite(self.0);
@@ -104,6 +114,7 @@ impl<S: Simd> Vec3<S> {
     pub fn w(&self) -> f32 {
         self.0.extract::<3>()
     }
+    #[inline(always)]
     pub fn as_array(&self) -> [f32; 4] {
         [self.x(), self.y(), self.z(), self.w()]
     }
@@ -114,6 +125,7 @@ impl<S: Simd> Vec3<S>
 where
     S::f32x4: LinAlg3Register,
 {
+    #[inline(always)]
     pub fn cross(&self, other: Vec3<S>) -> Self {
         // DOP=false: simpler formula. Anticommutativity (a×b + b×a == 0) holds
         // bit-exactly because every product cancels with its counterpart in
@@ -122,14 +134,17 @@ where
         Vec3(self.0.cross3::<false>(other.0))
     }
 
+    #[inline(always)]
     pub fn norm_squared(&self) -> f32 {
         self.0.dot3(self.0)
     }
 
+    #[inline(always)]
     pub fn norm(&self) -> f32 {
         self.norm_squared().sqrt()
     }
 
+    #[inline(always)]
     pub fn normalized(&self) -> Self {
         Vec3(self.0 / Vector::<S::f32x4>::splat(self.norm()))
     }
@@ -141,12 +156,14 @@ where
 {
     type Output = f32;
     /// dot product (3D, ignoring lane 4)
+    #[inline(always)]
     fn mul(self, other: Vec3<S>) -> f32 {
         self.0.dot3(other.0)
     }
 }
 
 impl<S: Simd> MulAssign for Vec3<S> {
+    #[inline(always)]
     fn mul_assign(&mut self, other: Vec3<S>) {
         self.0 = self.0 * other.0;
     }
@@ -154,6 +171,7 @@ impl<S: Simd> MulAssign for Vec3<S> {
 
 impl<S: Simd> Mul<f32> for Vec3<S> {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn mul(self, other: f32) -> Vec3<S> {
         Vec3(self.0 * Vector::<S::f32x4>::splat(other))
     }
@@ -161,6 +179,7 @@ impl<S: Simd> Mul<f32> for Vec3<S> {
 
 impl<S: Simd> Mul<Vec3<S>> for f32 {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn mul(self, other: Vec3<S>) -> Vec3<S> {
         other * self
     }
@@ -168,6 +187,7 @@ impl<S: Simd> Mul<Vec3<S>> for f32 {
 
 impl<S: Simd> Div<f32> for Vec3<S> {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn div(self, other: f32) -> Vec3<S> {
         Vec3(self.0 / Vector::<S::f32x4>::splat(other))
     }
@@ -175,6 +195,7 @@ impl<S: Simd> Div<f32> for Vec3<S> {
 
 impl<S: Simd> Add for Vec3<S> {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn add(self, other: Vec3<S>) -> Vec3<S> {
         Vec3(self.0 + other.0)
     }
@@ -182,6 +203,7 @@ impl<S: Simd> Add for Vec3<S> {
 
 impl<S: Simd> Neg for Vec3<S> {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn neg(self) -> Vec3<S> {
         Vec3(-self.0)
     }
@@ -189,12 +211,14 @@ impl<S: Simd> Neg for Vec3<S> {
 
 impl<S: Simd> Sub for Vec3<S> {
     type Output = Vec3<S>;
+    #[inline(always)]
     fn sub(self, other: Vec3<S>) -> Vec3<S> {
         Vec3(self.0 - other.0)
     }
 }
 
 impl<S: Simd> From<f32> for Vec3<S> {
+    #[inline(always)]
     fn from(s: f32) -> Vec3<S> {
         // splat s into the 3 lanes, lane 4 = 0
         Vec3::new(s, s, s)
@@ -202,24 +226,28 @@ impl<S: Simd> From<f32> for Vec3<S> {
 }
 
 impl<S: Simd> From<Vec3<S>> for Vector<S::f32x4> {
+    #[inline(always)]
     fn from(v: Vec3<S>) -> Vector<S::f32x4> {
         v.0
     }
 }
 
 impl<S: Simd> From<[f32; 3]> for Vec3<S> {
+    #[inline(always)]
     fn from(other: [f32; 3]) -> Vec3<S> {
         Vec3::new(other[0], other[1], other[2])
     }
 }
 
 impl<S: Simd> From<[f32; 4]> for Vec3<S> {
+    #[inline(always)]
     fn from(other: [f32; 4]) -> Vec3<S> {
         Vec3(Vector::<S::f32x4>::new(other))
     }
 }
 
 impl<S: Simd> From<Vector<S::f32x4>> for Vec3<S> {
+    #[inline(always)]
     fn from(v: Vector<S::f32x4>) -> Vec3<S> {
         Vec3(v)
     }
@@ -227,6 +255,7 @@ impl<S: Simd> From<Vector<S::f32x4>> for Vec3<S> {
 
 // Avoid unused-PhantomData warnings if S becomes unused in any future variant.
 #[allow(dead_code)]
+#[inline(always)]
 fn _phantom_s_marker<S: Simd>() -> PhantomData<S> {
     PhantomData
 }

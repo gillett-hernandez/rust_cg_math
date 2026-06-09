@@ -1,21 +1,25 @@
 use crate::prelude::*;
 use thermite::math::TranscendentalMath;
 
+#[inline(always)]
 pub fn power_heuristic(a: f32, b: f32) -> f32 {
     (a * a) / (a * a + b * b)
 }
 
 /// Vector form of `power_heuristic`. Replaces the old `power_heuristic_hero`
 /// (which was hardcoded to `f32x4`) — now generic across thermite vector widths.
+#[inline(always)]
 pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
     (a * a) / (a * a + b * b)
 }
 
+#[inline(always)]
 pub fn gaussianf32(x: f32, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32 {
     let sqrt = (x - mu) / (if x < mu { sigma1 } else { sigma2 });
     alpha * (-(sqrt * sqrt) / 2.0).exp()
 }
 
+#[inline(always)]
 pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
     let sqrt = (x - mu) / (if x < mu { sigma1 } else { sigma2 });
     alpha * (-(sqrt * sqrt) / 2.0).exp()
@@ -24,6 +28,7 @@ pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
 /// Vector form of `gaussianf32`. Generic over any thermite f32 float vector
 /// with transcendental support. Replaces the simdfloat_patch-gated
 /// `gaussian_f32x4`.
+#[inline(always)]
 pub fn gaussian_v<V>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
 where
     V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
@@ -35,6 +40,7 @@ where
     V::splat(alpha) * (-(sqrt * sqrt) / V::splat(2.0)).exp()
 }
 
+#[inline(always)]
 pub fn w(x: f32, mul: f32, offset: f32, sigma: f32) -> f32 {
     mul * (-(x - offset).powi(2) / sigma).exp() / (sigma * PI).sqrt()
 }
@@ -42,6 +48,7 @@ pub fn w(x: f32, mul: f32, offset: f32, sigma: f32) -> f32 {
 const HCC2: f32 = 1.1910429723971884140794892e-29;
 const HKC: f32 = 1.438777085924334052222404423195819240925e-2;
 
+#[inline(always)]
 pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
     let lambda = lambda * 1e-9;
 
@@ -50,6 +57,7 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
 
 /// Vector form of `blackbody`. Replaces the simdfloat_patch-gated
 /// `blackbody_f32x4`; now works across thermite vector widths.
+#[inline(always)]
 pub fn blackbody_v<V>(temperature: f32, lambda: V) -> V
 where
     V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
@@ -59,6 +67,7 @@ where
         / ((V::splat(HKC) / (lambda * V::splat(temperature))).exp() - V::splat(1.0))
 }
 
+#[inline(always)]
 pub fn max_blackbody_lambda(temp: f32) -> f32 {
     2.8977721e-3 / (temp * 1e-9)
 }
@@ -67,6 +76,7 @@ pub fn max_blackbody_lambda(temp: f32) -> f32 {
 // theta = azimuthal angle
 // phi = inclination, i.e. angle measured from +Z. the elevation angle would be pi/2 - phi
 
+#[inline(always)]
 pub fn uv_to_direction<S: thermite::simd::Simd>(uv: (f32, f32)) -> Vec3<S> {
     let theta = (uv.0 - 0.5) * 2.0 * PI;
     let phi = uv.1 * PI;
@@ -78,6 +88,7 @@ pub fn uv_to_direction<S: thermite::simd::Simd>(uv: (f32, f32)) -> Vec3<S> {
     Vec3::new(x, y, z)
 }
 
+#[inline(always)]
 pub fn direction_to_uv<S: thermite::simd::Simd>(direction: Vec3<S>) -> (f32, f32) {
     let theta = direction.y().atan2(direction.x());
     let phi = direction.z().acos();

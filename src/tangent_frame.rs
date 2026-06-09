@@ -11,11 +11,13 @@ pub struct TangentFrame<S: Simd> {
 
 impl<S: Simd> Copy for TangentFrame<S> {}
 impl<S: Simd> Clone for TangentFrame<S> {
+    #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
 impl<S: Simd> std::fmt::Debug for TangentFrame<S> {
+    #[inline(always)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TangentFrame")
             .field("tangent", &self.tangent)
@@ -29,6 +31,7 @@ impl<S: Simd> TangentFrame<S>
 where
     S::f32x4: LinAlg3Register,
 {
+    #[inline(always)]
     pub fn new(tangent: Vec3<S>, bitangent: Vec3<S>, normal: Vec3<S>) -> Self {
         debug_assert!(
             (tangent * bitangent).abs() < 0.000001,
@@ -54,6 +57,7 @@ where
             normal: normal.normalized(),
         }
     }
+    #[inline(always)]
     pub fn from_tangent_and_normal(tangent: Vec3<S>, normal: Vec3<S>) -> Self {
         TangentFrame {
             tangent: tangent.normalized(),
@@ -62,6 +66,7 @@ where
         }
     }
 
+    #[inline(always)]
     pub fn from_normal(normal: Vec3<S>) -> Self {
         let [x, y, z, _]: [f32; 4] = normal.as_array();
         let sign = (1.0 as f32).copysign(z);
