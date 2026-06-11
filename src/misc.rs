@@ -13,6 +13,39 @@ pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
     (a * a) / (a * a + b * b)
 }
 
+/// MIS power heuristic (β = 2, Veach eq. 9.13) for two sampling strategies whose
+/// pdfs are densities w.r.t. the **same** measure `M`. The shared `M` is enforced
+/// at compile time, so a solid-angle pdf cannot be weighted against an area pdf:
+/// Veach §9.3 requires every strategy's pdf to be expressed against one common
+/// measure before combining (convert them with [`PDF::convert`] first). The
+/// weight is a dimensionless ratio, so the measure tag drops off the result.
+///
+/// Generic over the field `T`, so it serves both scalar (`f32`) pdfs and
+/// hero-wavelength vector pdfs (per-lane weights), mirroring [`power_heuristic`]
+/// / [`power_heuristic_v`], to which it delegates the arithmetic.
+///
+/// ```
+/// use math::prelude::*;
+/// let a: PDF<f32, Area> = PDF::new(3.0);
+/// let b: PDF<f32, Area> = PDF::new(4.0);
+/// let w = power_heuristic_pdf(a, b); // measures match → OK
+/// assert!((w - 9.0 / 25.0).abs() < 1e-6);
+/// ```
+///
+/// Mixing measures is rejected by the compiler:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+/// let a: PDF<f32, Area> = PDF::new(3.0);
+/// let b: PDF<f32, SolidAngle> = PDF::new(4.0);
+/// let _w = power_heuristic_pdf(a, b); // ERROR: Area ≠ SolidAngle
+/// ```
+#[inline(always)]
+pub fn power_heuristic_pdf<T: Field, M: Measure>(a: PDF<T, M>, b: PDF<T, M>) -> T {
+    let (a, b) = (*a, *b);
+    (a * a) / (a * a + b * b)
+}
+
 #[inline(always)]
 pub fn gaussianf32(x: f32, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> f32 {
     let sqrt = (x - mu) / (if x < mu { sigma1 } else { sigma2 });
@@ -116,6 +149,25 @@ mod test {
             let h2 = power_heuristic(b, a);
             let sum = h1 + h2;
             prop_assert!((sum - 1.0).abs() < 1e-4, "h(a,b)+h(b,a)={}", sum);
+        }
+
+        #[test]
+        fn power_heuristic_pdf_matches_raw(a in 0.01f32..100.0, b in 0.01f32..100.0) {
+            // the measure-tagged form must compute exactly the same weight as the
+            // raw primitive once the measure tag is applied.
+            let pa: PDF<f32, Area> = PDF::new(a);
+            let pb: PDF<f32, Area> = PDF::new(b);
+            let w = power_heuristic_pdf(pa, pb);
+            prop_assert_eq!(w, power_heuristic(a, b));
+        }
+
+        #[test]
+        fn power_heuristic_pdf_complement(a in 0.01f32..100.0, b in 0.01f32..100.0) {
+            // two pdfs against the SAME measure: weights still sum to 1.
+            let pa: PDF<f32, Area> = PDF::new(a);
+            let pb: PDF<f32, Area> = PDF::new(b);
+            let sum = power_heuristic_pdf(pa, pb) + power_heuristic_pdf(pb, pa);
+            prop_assert!((sum - 1.0).abs() < 1e-4, "w(a,b)+w(b,a)={}", sum);
         }
 
         #[test]

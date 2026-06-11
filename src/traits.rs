@@ -1,29 +1,47 @@
 use typenum::Unsigned;
 
 use crate::spaces::{
-    Circle, DirectionalSector, DiskSpace, Element, ProductSet, R, SimpleSet, SpaceParameterization,
-    SphericalCoordinates,
+    Angles, Circle, DirectionalSector, DiskSpace, Directions, Domain, Element, Parameterization,
+    ProductDomain, ProductSet, R, RealLine, SimpleSet, SphericalCoordinates,
 };
 
 use crate::prelude::*;
 use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 
-// TODO: figure out if it's necessary to create a separate trait for the support of a measure,
-// i.e. R for Uniform01, or R^2 for Area, S^2 for Solid Angle, H+ for Projected Solid Angle, etc
-// benefit would be allowing for other traits/structs/generics to reference the support without specifying a measure
-
 // TODO: implement a sampling trait that allows for sampling within a specified set that is a member of the support of a measure
 // i.e. sample uniformly within an interval, sample uniformly within a set of directions, or within a volume, etc
 
+/// A mathematical measure, identified by the [`Domain`] (measurable set) it is
+/// defined over. This trait carries *only the identity* of the measure — it is
+/// the tag on `PDF<T, M>` / `Integrand<T, M>` that makes measure-correctness
+/// checkable at compile time (Veach eq. 8.9). The numeric machinery (measuring a
+/// set, the Lebesgue density) is chart-dependent and lives on [`ChartedMeasure`].
+///
+/// Two distinct measures can share a `Domain` — `SolidAngle` and
+/// `ProjectedSolidAngle` are both over [`Directions`] — and are related by a
+/// Radon–Nikodym factor (see `pdf::MeasureConversion`).
 pub trait Measure {
-    type Space: SpaceParameterization;
+    type Domain: Domain;
+}
+
+/// A [`Measure`] evaluated through a specific chart `P`. Splitting this off
+/// [`Measure`] is the point of this design: the chart's Lebesgue measure is the
+/// reference for `differential_measure` (the Radon–Nikodym derivative
+/// `dμ/dλ_P`), so it depends on *both* the measure and the parameterization —
+/// e.g. solid angle is `sinθ` in spherical coordinates but `1` over a cone
+/// `DirectionalSector`. The chart must coordinatize this measure's own domain.
+pub trait ChartedMeasure<P: Parameterization>: Measure
+where
+    P: Parameterization<Domain = <Self as Measure>::Domain>,
+{
     /// measure a set
-    fn measure(set: SimpleSet<Self::Space>) -> f32;
+    fn measure(set: SimpleSet<P>) -> f32;
     /// differential measure at a point. if the space/parameterization is uniform, then the differential measure will just be 1.
     /// if the space/parameterization is uniform and the measure is a pdf, then the differential measure will likely just be 1 / mu(Omega)
     /// where mu is the measure and Omega is the entire space over which the pdf is defined
-    fn differential_measure(element: Element<Self::Space>) -> f32;
+    fn differential_measure(element: Element<P>) -> f32;
 }
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProductMeasure<A: Measure, B: Measure> {
     pub a: A,
@@ -31,37 +49,39 @@ pub struct ProductMeasure<A: Measure, B: Measure> {
 }
 
 impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
-    type Space = ProductSet<A::Space, B::Space>;
+    type Domain = ProductDomain<A::Domain, B::Domain>;
+}
 
+impl<A, B, PA, PB> ChartedMeasure<ProductSet<PA, PB>> for ProductMeasure<A, B>
+where
+    PA: Parameterization<Domain = A::Domain>,
+    PB: Parameterization<Domain = B::Domain>,
+    A: ChartedMeasure<PA>,
+    B: ChartedMeasure<PB>,
+{
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<ProductSet<PA, PB>>) -> f32 {
         A::measure(set.0) * B::measure(set.1)
     }
     #[inline(always)]
-    fn differential_measure(element: Element<Self::Space>) -> f32 {
+    fn differential_measure(element: Element<ProductSet<PA, PB>>) -> f32 {
         A::differential_measure(element.0) * B::differential_measure(element.1)
     }
 }
-
-/* pub trait PDF: Measure {
-    #[inline(always)]
-    fn verify() -> bool {
-        let space = <<Self as Measure>::Space as SpaceParameterization>::SPACE;
-        (Self::measure(space) - 1.0) < 0.0001
-    }
-} */
 
 /// basic lebesgue length measure
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Length;
 impl Measure for Length {
-    type Space = R;
+    type Domain = RealLine;
+}
+impl ChartedMeasure<R> for Length {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<R>) -> f32 {
         set.span()
     }
     #[inline(always)]
-    fn differential_measure(_: Element<Self::Space>) -> f32 {
+    fn differential_measure(_: Element<R>) -> f32 {
         1.0
     }
 }
@@ -75,35 +95,42 @@ pub type Volume = ProductMeasure<Area, Length>;
 pub struct Angle;
 
 impl Measure for Angle {
-    type Space = Circle;
+    type Domain = Angles;
+}
+impl ChartedMeasure<Circle> for Angle {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
-        set.span() % Self::Space::SPACE.span()
+    fn measure(set: SimpleSet<Circle>) -> f32 {
+        set.span() % Circle::SPACE.span()
     }
     #[inline(always)]
-    fn differential_measure(_: Element<Self::Space>) -> f32 {
+    fn differential_measure(_: Element<Circle>) -> f32 {
         1.0
     }
 }
 
 pub struct DiskAreaMeasure;
 
+// The disk-area measure is charted by `DiskSpace` (a product of an angle chart
+// and a radius chart), so its domain is the corresponding product domain. Note
+// it is NOT a `ProductMeasure`: the radius Jacobian in `differential_measure`
+// couples the factors.
 impl Measure for DiskAreaMeasure {
-    type Space = DiskSpace;
-
+    type Domain = ProductDomain<Angles, RealLine>;
+}
+impl ChartedMeasure<DiskSpace> for DiskAreaMeasure {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<DiskSpace>) -> f32 {
         // set.0 is angle bounds and set.1 is radius bounds
 
         // this formula (and the jacobian in differential_measure) can be
         // derived from the parameterization and change of variables / jacobian, then integration over the set bounds
 
-        set.0.span() % Self::Space::SPACE.0.span() / 2.0
+        set.0.span() % DiskSpace::SPACE.0.span() / 2.0
             * (set.1.upper.powi(2) - set.1.lower.powi(2))
     }
 
     #[inline(always)]
-    fn differential_measure(element: Element<Self::Space>) -> f32 {
+    fn differential_measure(element: Element<DiskSpace>) -> f32 {
         element.1
     }
 }
@@ -113,13 +140,20 @@ impl Measure for DiskAreaMeasure {
 /// when in differential form, represents an infinitesimal increase in solid angle.
 ///      = sin(theta) d[theta] d[phi]
 ///      = d[cos theta] d[phi]
+/// solid angle measure, defined on the set of directions ([`Directions`]),
+/// independent of the chart used to evaluate it. The measure of the whole
+/// sphere is 4π. Charted by [`SphericalCoordinates`] (`dσ = sinθ dθ dφ`) and by
+/// [`DirectionalSector`] (a cone). Collapsing the former `SolidAngle<P>` into a
+/// single type lets a `PDF<_, SolidAngle>` match regardless of which chart
+/// produced it (Veach §3.6.3).
 #[derive(Copy, Clone, Debug, Default)]
-pub struct SolidAngle<P: SpaceParameterization>(PhantomData<P>);
-impl Measure for SolidAngle<SphericalCoordinates> {
-    type Space = SphericalCoordinates;
-
+pub struct SolidAngle;
+impl Measure for SolidAngle {
+    type Domain = Directions;
+}
+impl ChartedMeasure<SphericalCoordinates> for SolidAngle {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<SphericalCoordinates>) -> f32 {
         let azimuthal = set.x.span();
         let Bounds1D {
             lower: phi0,
@@ -132,24 +166,21 @@ impl Measure for SolidAngle<SphericalCoordinates> {
     }
 
     #[inline(always)]
-    fn differential_measure(element: Element<Self::Space>) -> f32 {
+    fn differential_measure(element: Element<SphericalCoordinates>) -> f32 {
         element.1.sin()
     }
 }
 
-impl Measure for SolidAngle<DirectionalSector> {
-    type Space = DirectionalSector;
+impl ChartedMeasure<DirectionalSector> for SolidAngle {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<DirectionalSector>) -> f32 {
         TAU * (1.0 - set.1.cos())
     }
     #[inline(always)]
-    fn differential_measure(_: Element<Self::Space>) -> f32 {
+    fn differential_measure(_: Element<DirectionalSector>) -> f32 {
         1.0
     }
 }
-
-// TODO: parameterize ProjectedSolidAngle with a P: SpaceParameterization similarly to SolidAngle, instead of just for SphericalCoordinates
 
 /// projected solid angle measure, defined on the set of directions
 /// the measure of a whole hemisphere is pi
@@ -161,9 +192,11 @@ impl Measure for SolidAngle<DirectionalSector> {
 #[derive(Copy, Clone, Debug, Default)]
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {
-    type Space = SphericalCoordinates;
+    type Domain = Directions;
+}
+impl ChartedMeasure<SphericalCoordinates> for ProjectedSolidAngle {
     #[inline(always)]
-    fn measure(set: SimpleSet<Self::Space>) -> f32 {
+    fn measure(set: SimpleSet<SphericalCoordinates>) -> f32 {
         let azimuthal = set.x.span();
         let phi_bounds = set.y;
         // measure is azimuthal * int_phi0^phi1 { |cos(phi)| sin(phi) }
@@ -184,7 +217,7 @@ impl Measure for ProjectedSolidAngle {
         }
     }
     #[inline(always)]
-    fn differential_measure(element: Element<Self::Space>) -> f32 {
+    fn differential_measure(element: Element<SphericalCoordinates>) -> f32 {
         element.1.cos().abs() * element.1.sin()
     }
 }
@@ -568,14 +601,16 @@ mod test {
     fn solidangle_measure() {
         type TestS = thermite::backend::scalar::Scalar;
         let e: Vec3<TestS> = Vec3::new(1.0, 1.0, 1.0).normalized();
-        let d_mu = SolidAngle::<DirectionalSector>::differential_measure(
+        let d_mu = <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure(
             e.as_array()[..3].try_into().unwrap(),
         );
         println!("d_mu is {}", d_mu);
 
         let uv = direction_to_uv(e);
-        let d_mu =
-            SolidAngle::<SphericalCoordinates>::differential_measure((uv.0 * TAU, uv.1 * PI));
+        let d_mu = <SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((
+            uv.0 * TAU,
+            uv.1 * PI,
+        ));
         println!("d_mu is {}", d_mu);
     }
 

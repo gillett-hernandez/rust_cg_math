@@ -4,7 +4,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{prelude::*, spaces::SpaceParameterization};
+use crate::prelude::*;
 
 /// A probability density value `dP/dM` — a `T`-valued density taken with respect
 /// to the geometric measure `M` (Veach, Radon–Nikodym derivative, Thm. 3.2/3.3).
@@ -23,12 +23,6 @@ pub struct PDF<T: Field, M: Measure> {
 
 impl<T: Field, M: Measure> PDF<T, M> {
     pub fn new(v: T) -> Self {
-        Self {
-            v,
-            measure: PhantomData,
-        }
-    }
-    pub fn new_with_measure(v: T, m: M) -> Self {
         Self {
             v,
             measure: PhantomData,
@@ -119,6 +113,58 @@ where
 /// (the `f` in `∫ f dM`). Distinct from [`PDF`], which is a *density* `dP/dM`:
 /// an integrand transforms like the measure element, a density transforms
 /// inversely. Divide by a matching [`PDF`] to form the Monte Carlo estimate.
+///
+/// The measure tag `M` is checked at compile time: an `Integrand<T, M>` can only
+/// be divided by a `PDF<T, M>` with the *same* `M`. This is the type-level form
+/// of Veach's unbiasedness condition (eq. 8.9) — `f(X)/p(X)` is only a valid
+/// estimator when `f` and `p` reference the same measure. Mismatches below are
+/// rejected by the compiler, so there is no runtime check to test for: the
+/// `compile_fail` examples assert that the bad code does not build.
+///
+/// Matching measures divide fine and yield a measure-free [`Estimate`]:
+///
+/// ```
+/// use math::prelude::*;
+///
+/// let f: Integrand<f32, SolidAngle> = Integrand::new(6.0);
+/// let p: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let est: Estimate<f32> = f / p; // measures match → OK
+/// assert_eq!(*est, 3.0);
+/// ```
+///
+/// An area integrand cannot be divided by a solid-angle density:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+///
+/// let f: Integrand<f32, Area> = Integrand::new(6.0);
+/// let p: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let _est = f / p; // ERROR: no `Div` impl — Area ≠ SolidAngle
+/// ```
+///
+/// Nor can a throughput integrand be divided by an area density:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+///
+/// let f: Integrand<f32, Throughput> = Integrand::new(1.0);
+/// let p: PDF<f32, Area> = PDF::new(1.0);
+/// let _est = f / p; // ERROR: Throughput ≠ Area
+/// ```
+///
+/// [`PDF::convert`] changes the measure tag, so a converted density no longer
+/// matches an integrand taken against the original measure:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+///
+/// let f: Integrand<f32, SolidAngle> = Integrand::new(1.0);
+/// let p: PDF<f32, SolidAngle> = PDF::new(1.0);
+/// // converting to projected solid angle re-tags the density:
+/// let p_psa: PDF<f32, ProjectedSolidAngle> =
+///     p.convert(DirectionalGeom { cos_theta: 0.5 });
+/// let _est = f / p_psa; // ERROR: SolidAngle ≠ ProjectedSolidAngle
+/// ```
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
 pub struct Integrand<T: Field, M: Measure> {
     v: T,
@@ -257,11 +303,7 @@ pub struct AreaGeom {
 }
 
 // dσ/dσ⊥ = 1/|cos θ|   (Veach 8.11)
-impl<P: SpaceParameterization> MeasureConversion<SolidAngle<P>, ProjectedSolidAngle>
-    for DirectionalGeom
-where
-    SolidAngle<P>: Measure,
-{
+impl MeasureConversion<SolidAngle, ProjectedSolidAngle> for DirectionalGeom {
     #[inline(always)]
     fn jacobian(&self) -> f32 {
         self.cos_theta.abs().recip()
@@ -269,11 +311,7 @@ where
 }
 
 // dσ⊥/dσ = |cos θ|
-impl<P: SpaceParameterization> MeasureConversion<ProjectedSolidAngle, SolidAngle<P>>
-    for DirectionalGeom
-where
-    SolidAngle<P>: Measure,
-{
+impl MeasureConversion<ProjectedSolidAngle, SolidAngle> for DirectionalGeom {
     #[inline(always)]
     fn jacobian(&self) -> f32 {
         self.cos_theta.abs()
@@ -281,10 +319,7 @@ where
 }
 
 // dσ/dA = |cos θ| / r²   (Veach 8.10):  p_area = p_σ · cos/r²
-impl<P: SpaceParameterization> MeasureConversion<SolidAngle<P>, Area> for AreaGeom
-where
-    SolidAngle<P>: Measure,
-{
+impl MeasureConversion<SolidAngle, Area> for AreaGeom {
     #[inline(always)]
     fn jacobian(&self) -> f32 {
         self.cos_theta.abs() / self.dist_sq
@@ -292,10 +327,7 @@ where
 }
 
 // dA/dσ = r² / |cos θ|
-impl<P: SpaceParameterization> MeasureConversion<Area, SolidAngle<P>> for AreaGeom
-where
-    SolidAngle<P>: Measure,
-{
+impl MeasureConversion<Area, SolidAngle> for AreaGeom {
     #[inline(always)]
     fn jacobian(&self) -> f32 {
         self.dist_sq / self.cos_theta.abs()
@@ -307,7 +339,7 @@ where
 /// density directly to a projected-solid-angle density, composing the A↔σ and
 /// σ↔σ⊥ steps (Veach eq. 8.2: the geometric term `G = |cos_i · cos_o| / r²`).
 /// Equivalent to chaining [`AreaGeom`] then [`DirectionalGeom`] through a
-/// `SolidAngle<P>` intermediate, but without naming `P`.
+/// [`SolidAngle`] intermediate.
 #[derive(Copy, Clone, Debug)]
 pub struct EdgeGeom {
     pub cos_i: f32,
@@ -336,10 +368,7 @@ impl MeasureConversion<Area, ProjectedSolidAngle> for EdgeGeom {
 // ---------------------------------------------------------------------------
 
 // special conversions
-impl<T: Field, P: SpaceParameterization> PDF<T, SolidAngle<P>>
-where
-    SolidAngle<P>: Measure,
-{
+impl<T: Field> PDF<T, SolidAngle> {
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos θ| (the measure-element \
                 factor dσ⊥/dσ), but a density converts by dσ/dσ⊥ = 1/|cos θ| (Veach \
@@ -368,14 +397,13 @@ impl<T: Field> PDF<T, Area> {
                 of the old result — verify the path tracer didn't depend on the old \
                 direction. Use `pdf.convert(AreaGeom { cos_theta, dist_sq })` instead."
     )]
-    pub fn convert_to_solid_angle<S: Scalar + ToScalar<f32>, P: SpaceParameterization>(
+    pub fn convert_to_solid_angle<S: Scalar + ToScalar<f32>>(
         &self,
         cos_theta: S,
         distance_squared: S,
-    ) -> PDF<T, SolidAngle<P>>
+    ) -> PDF<T, SolidAngle>
     where
         T: FromScalar<f32>,
-        SolidAngle<P>: Measure,
     {
         (*self).convert(AreaGeom {
             cos_theta: cos_theta.to_scalar(),
@@ -419,9 +447,9 @@ impl<T: Field> PDF<T, Area> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::spaces::SphericalCoordinates;
+    use crate::spaces::{DirectionalSector, SphericalCoordinates};
 
-    type SA = SolidAngle<SphericalCoordinates>;
+    type SA = SolidAngle;
 
     /// Deterministic stratified midpoint grid over `[0,1)²`: `N×N` samples at the
     /// stratum centers. No RNG, so the Monte Carlo tests below are reproducible.
@@ -442,6 +470,31 @@ mod test {
         let p: PDF<f32, Area> = PDF::new(2.0);
         let est: Estimate<f32> = f / p;
         assert_eq!(*est, 3.0);
+    }
+
+    #[test]
+    fn solid_angle_is_chart_independent() {
+        // The whole point of TODO #4: `SolidAngle` is one measure over the
+        // `Directions` domain, no longer parameterized by the chart. A density
+        // whose value came from the spherical-coordinate Jacobian and one from
+        // the cone (DirectionalSector) chart now have the SAME type, so either
+        // can divide an `Integrand<_, SolidAngle>`. (Before the split these were
+        // distinct types `SolidAngle<SphericalCoordinates>` vs
+        // `SolidAngle<DirectionalSector>` and this would not compile.)
+        let theta = std::f32::consts::FRAC_PI_3;
+        let d_spherical =
+            <SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((0.0, theta));
+        let d_cone = <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure([
+            0.0, 0.0, 1.0,
+        ]);
+
+        let p_from_spherical: PDF<f32, SolidAngle> = PDF::new(d_spherical);
+        let p_from_cone: PDF<f32, SolidAngle> = PDF::new(d_cone);
+
+        // both share the measure tag, so both divide an integrand of the same tag
+        let _e1: Estimate<f32> = Integrand::<f32, SolidAngle>::new(1.0) / p_from_spherical;
+        let _e2: Estimate<f32> = Integrand::<f32, SolidAngle>::new(1.0) / p_from_cone;
+        assert_eq!(d_cone, 1.0); // cone chart Jacobian is unity
     }
 
     #[test]
