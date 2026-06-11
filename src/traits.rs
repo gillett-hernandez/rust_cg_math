@@ -401,7 +401,7 @@ impl Field for f32 {
     }
     #[inline(always)]
     fn min(&self, other: Self) -> Self {
-        f32::max(*self, other)
+        f32::min(*self, other)
     }
 }
 impl Scalar for f32 {}
@@ -512,6 +512,15 @@ impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
         } else {
             None
         }
+    }
+}
+
+// Lets spectral pdfs (`HeroWavelength`, i.e. `PDF<Vector<R>, _>`) flow through
+// the scalar-Jacobian measure conversions in `pdf.rs`.
+impl<R: thermite::register::FloatRegister<Element = f32>> FromScalar<f32> for Vector<R> {
+    #[inline(always)]
+    fn from_scalar(v: f32) -> Self {
+        Vector::<R>::splat(v)
     }
 }
 
