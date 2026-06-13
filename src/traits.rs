@@ -1,4 +1,4 @@
-use typenum::Unsigned;
+use typenum::{Sum, U1, Unsigned};
 
 use crate::spaces::{
     Angles, Circle, DirectionalSector, DiskSpace, Directions, Domain, Element, Parameterization,
@@ -241,13 +241,150 @@ impl<N: Unsigned> Default for PathThroughput<N> {
     }
 }
 
-impl<N: Unsigned + Add> Mul<Throughput> for PathThroughput<N>
+impl<N> Mul<Throughput> for PathThroughput<N>
 where
-    <N as Add>::Output: typenum::Unsigned,
+    N: Unsigned + Add<U1>,
+    Sum<N, U1>: Unsigned,
 {
-    type Output = PathThroughput<<N as Add>::Output>;
+    type Output = PathThroughput<Sum<N, U1>>;
     #[inline(always)]
     fn mul(self, _: Throughput) -> Self::Output {
+        Self::Output::default()
+    }
+}
+
+/// Concatenating two sub-paths multiplies their throughput densities, so the
+/// ranks add: `PathThroughput<M> * PathThroughput<N> = PathThroughput<M+N>`.
+impl<M, N> Mul<PathThroughput<N>> for PathThroughput<M>
+where
+    M: Unsigned + Add<N>,
+    N: Unsigned,
+    Sum<M, N>: Unsigned,
+{
+    type Output = PathThroughput<Sum<M, N>>;
+    #[inline(always)]
+    fn mul(self, _: PathThroughput<N>) -> Self::Output {
+        Self::Output::default()
+    }
+}
+
+/// Phantom [`Domain`] of the throughput measure on a path of `N` vertices: the
+/// `N`-fold product of the per-bounce throughput domain. Indexed by the typenum
+/// rank so paths of different length are distinct domains. Mirrors
+/// [`AreaProductDomain`]; `N` is the only thing distinguishing ranks, so a phantom
+/// captures the identity exactly.
+pub struct PathThroughputDomain<N: Unsigned>(PhantomData<N>);
+impl<N: Unsigned> Default for PathThroughputDomain<N> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<N: Unsigned> Clone for PathThroughputDomain<N> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<N: Unsigned> Copy for PathThroughputDomain<N> {}
+impl<N: Unsigned> Domain for PathThroughputDomain<N> {}
+
+/// `PathThroughput<N>` is a pure identity [`Measure`] tag (like [`AreaProduct`]):
+/// it carries no concrete chart, so it has no [`ChartedMeasure`] impl, but it can
+/// tag a `PDF` / `Integrand` so #1's `Integrand / PDF` division cancels two
+/// throughput-measure quantities only when their vertex counts match.
+impl<N: Unsigned> Measure for PathThroughput<N> {
+    type Domain = PathThroughputDomain<N>;
+}
+
+/// Phantom [`Domain`] of the area-product measure on a path of `N` vertices: the
+/// `N`-fold product of the surface-area domain (`ℝ²`). Indexed by the typenum
+/// rank so paths of different length are distinct domains.
+pub struct AreaProductDomain<N: Unsigned>(PhantomData<N>);
+impl<N: Unsigned> Default for AreaProductDomain<N> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+impl<N: Unsigned> Clone for AreaProductDomain<N> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<N: Unsigned> Copy for AreaProductDomain<N> {}
+impl<N: Unsigned> Domain for AreaProductDomain<N> {}
+
+/// The **area-product measure** on path space (Veach §8.A, `μ^a`): the product of
+/// `N` copies of the surface-[`Area`] measure, one per path vertex. Path
+/// contributions in a vertex-area formulation are densities w.r.t. this measure,
+/// which is *distinct* from the throughput measure [`Throughput`] /
+/// [`PathThroughput`] (the latter folds in the geometry/cosine terms). Tagging a
+/// `PDF` / `Integrand` with `AreaProduct<N>` lets #1's `Integrand / PDF` division
+/// cancel two path quantities only when their vertex counts match.
+///
+/// `N` is a typenum rank, so a path can be grown in the type system:
+/// `AreaProduct<N> * Area = AreaProduct<N+1>` appends one vertex (see the [`Mul`]
+/// impl).
+///
+/// ```
+/// use math::prelude::*;
+/// use typenum::U3;
+/// // a 3-vertex path contribution divided by its 3-vertex area-product pdf
+/// let f: Integrand<f32, AreaProduct<U3>> = Integrand::new(6.0);
+/// let p: PDF<f32, AreaProduct<U3>> = PDF::new(2.0);
+/// let est: Estimate<f32> = f / p; // ranks match → OK
+/// assert_eq!(*est, 3.0);
+/// ```
+///
+/// A 2-vertex pdf cannot cancel a 3-vertex integrand:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+/// use typenum::{U2, U3};
+/// let f: Integrand<f32, AreaProduct<U3>> = Integrand::new(6.0);
+/// let p: PDF<f32, AreaProduct<U2>> = PDF::new(2.0);
+/// let _est = f / p; // ERROR: AreaProduct<U3> ≠ AreaProduct<U2>
+/// ```
+#[derive(Debug, Copy, Clone)]
+pub struct AreaProduct<N: Unsigned>(PhantomData<N>);
+
+impl<N: Unsigned> Default for AreaProduct<N> {
+    #[inline(always)]
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<N: Unsigned> Measure for AreaProduct<N> {
+    type Domain = AreaProductDomain<N>;
+}
+
+/// Append a vertex to a path: `AreaProduct<N> * Area = AreaProduct<N+1>`.
+impl<N> Mul<Area> for AreaProduct<N>
+where
+    N: Unsigned + Add<U1>,
+    Sum<N, U1>: Unsigned,
+{
+    type Output = AreaProduct<Sum<N, U1>>;
+    #[inline(always)]
+    fn mul(self, _: Area) -> Self::Output {
+        Self::Output::default()
+    }
+}
+
+/// Concatenating two sub-paths multiplies their area-product densities, so the
+/// ranks add: `AreaProduct<M> * AreaProduct<N> = AreaProduct<M+N>`.
+impl<M, N> Mul<AreaProduct<N>> for AreaProduct<M>
+where
+    M: Unsigned + Add<N>,
+    N: Unsigned,
+    Sum<M, N>: Unsigned,
+{
+    type Output = AreaProduct<Sum<M, N>>;
+    #[inline(always)]
+    fn mul(self, _: AreaProduct<N>) -> Self::Output {
         Self::Output::default()
     }
 }
@@ -595,6 +732,59 @@ mod test {
     #[test]
     fn diskarea_measure() {
         let m = DiskAreaMeasure;
+    }
+
+    #[test]
+    fn area_product_extends_rank() {
+        use typenum::{U2, U3};
+        // appending a vertex increments the typenum rank — checked at compile time
+        // by the type ascription on the binding.
+        let _: AreaProduct<U3> = AreaProduct::<U2>::default() * Area::default();
+    }
+
+    #[test]
+    fn path_throughput_extends_rank() {
+        use typenum::{U2, U3};
+        // multiplying by one Throughput factor appends one path vertex: the rank
+        // increments by U1 (not the old Add<N> doubling). Checked at compile time
+        // by the type ascription on the binding.
+        let _: PathThroughput<U3> = PathThroughput::<U2>::default() * Throughput::default();
+    }
+
+    #[test]
+    fn area_product_concatenation_adds_ranks() {
+        use typenum::{U2, U3, U5};
+        // joining two sub-paths multiplies their densities → ranks add.
+        let _: AreaProduct<U5> = AreaProduct::<U2>::default() * AreaProduct::<U3>::default();
+    }
+
+    #[test]
+    fn path_throughput_concatenation_adds_ranks() {
+        use typenum::{U2, U3, U5};
+        let _: PathThroughput<U5> =
+            PathThroughput::<U2>::default() * PathThroughput::<U3>::default();
+    }
+
+    #[test]
+    fn path_throughput_estimator_cancels() {
+        use typenum::U4;
+        // PathThroughput<N> is now a Measure, so #1's Integrand / PDF division
+        // cancels matching path ranks into a measure-free Estimate.
+        let f: Integrand<f32, PathThroughput<U4>> = Integrand::new(9.0);
+        let p: PDF<f32, PathThroughput<U4>> = PDF::new(3.0);
+        let est: Estimate<f32> = f / p;
+        assert_eq!(*est, 3.0);
+    }
+
+    #[test]
+    fn area_product_estimator_cancels() {
+        use typenum::U4;
+        // #1's Integrand / PDF division cancels matching path ranks, yielding a
+        // measure-free Estimate.
+        let f: Integrand<f32, AreaProduct<U4>> = Integrand::new(8.0);
+        let p: PDF<f32, AreaProduct<U4>> = PDF::new(2.0);
+        let est: Estimate<f32> = f / p;
+        assert_eq!(*est, 4.0);
     }
 
     #[test]
