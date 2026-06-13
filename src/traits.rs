@@ -401,14 +401,6 @@ impl Abs for f32 {
     }
 }
 
-impl Abs for f32x4 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        // disambiguation needed because this method ^ and this method v share the same name
-        std::simd::num::SimdFloat::abs(self)
-    }
-}
-
 pub trait TotalPartialOrd {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering>;
 }
@@ -417,30 +409,6 @@ impl TotalPartialOrd for f32 {
     #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         PartialOrd::partial_cmp(self, other)
-    }
-}
-
-impl TotalPartialOrd for f32x4 {
-    #[inline(always)]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.eq(other) {
-            Some(Ordering::Equal)
-        } else if self.simd_ge(*other).all() {
-            Some(Ordering::Greater)
-        } else if self.simd_le(*other).all() {
-            Some(Ordering::Less)
-        } else {
-            None
-        }
-        /* if self.gt(*other).all() {
-            Some(Ordering::Greater)
-        } else if self.eq(other) {
-            Some(Ordering::Equal)
-        } else if self.lt(*other).all() {
-            Some(Ordering::Less)
-        } else {
-            None
-        } */
     }
 }
 
@@ -481,39 +449,11 @@ impl CheckNAN for f32 {
     }
 }
 
-impl CheckNAN for f32x4 {
-    #[inline(always)]
-    fn check_nan(&self) -> CheckResult {
-        let mask = self.is_nan();
-        if mask.all() {
-            CheckResult::All
-        } else if mask.any() {
-            CheckResult::Some
-        } else {
-            CheckResult::None
-        }
-    }
-}
-
 impl CheckInf for f32 {
     #[inline(always)]
     fn check_inf(&self) -> CheckResult {
         if self.is_infinite() {
             CheckResult::All
-        } else {
-            CheckResult::None
-        }
-    }
-}
-
-impl CheckInf for f32x4 {
-    #[inline(always)]
-    fn check_inf(&self) -> CheckResult {
-        let mask = self.is_infinite();
-        if mask.all() {
-            CheckResult::All
-        } else if mask.any() {
-            CheckResult::Some
         } else {
             CheckResult::None
         }
@@ -576,25 +516,6 @@ impl Field for f32 {
 }
 impl Scalar for f32 {}
 
-impl Field for f32x4 {
-    const ONE: Self = f32x4::from_array([1.0, 1.0, 1.0, 1.0]);
-    const ZERO: Self = f32x4::from_array([0.0, 0.0, 0.0, 0.0]);
-    #[inline(always)]
-    fn max(&self, other: Self) -> Self {
-        f32x4::simd_max(*self, other)
-    }
-    #[inline(always)]
-    fn min(&self, other: Self) -> Self {
-        f32x4::simd_min(*self, other)
-    }
-}
-
-impl ToScalar<f32> for f32x4 {
-    #[inline(always)]
-    fn to_scalar(&self) -> f32 {
-        self[0]
-    }
-}
 impl ToScalar<f32> for f32 {
     // noop
     #[inline(always)]
@@ -603,12 +524,6 @@ impl ToScalar<f32> for f32 {
     }
 }
 
-impl FromScalar<f32> for f32x4 {
-    #[inline(always)]
-    fn from_scalar(v: f32) -> f32x4 {
-        f32x4::splat(v)
-    }
-}
 impl FromScalar<f32> for f32 {
     // noop
     #[inline(always)]
@@ -623,10 +538,10 @@ impl FromScalar<f32> for f32 {
 // thereby plugs into `WavelengthEnergy`, `PDF`, `Curve`, etc.) without us
 // having to write per-type impls.
 //
-// The concrete `f32x4` (std::simd) impls above are retained for now because
-// the public `HeroWavelength = WavelengthEnergy<f32x4, f32x4>` alias still
-// references std::simd::f32x4. Stage 2 of the thermite migration will swap
-// that alias to a thermite Vector and then those concrete impls become dead.
+// `HeroWavelength` is `WavelengthEnergy<Vector<R>, Vector<R>>`, so these
+// `Vector<R>` impls are the only spectral-vector path; the old concrete
+// `std::simd::f32x4` impls were dead once that alias migrated and have been
+// removed (the crate no longer needs `#![feature(portable_simd)]`).
 // ===========================================================================
 
 // The blanket impls are written over `Vector<R>` (concrete type constructor) +

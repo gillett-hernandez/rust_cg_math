@@ -1,4 +1,3 @@
-#![feature(portable_simd)]
 #![warn(rust_2018_idioms, rust_2021_compatibility)]
 
 pub mod bounds;
