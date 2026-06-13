@@ -143,6 +143,10 @@ pub trait SampleField:
     fn sqrt(self) -> Self;
     /// `(sin, cos)` together (matches `f32::sin_cos`).
     fn sin_cos(self) -> (Self, Self);
+    /// Inverse cosine.
+    fn acos(self) -> Self;
+    /// `self` raised to a constant power.
+    fn powf(self, p: f32) -> Self;
     /// The underlying value, for building the concrete sample at the boundary.
     fn value(self) -> f32;
 }
@@ -159,6 +163,14 @@ impl SampleField for f32 {
     #[inline(always)]
     fn sin_cos(self) -> (Self, Self) {
         f32::sin_cos(self)
+    }
+    #[inline(always)]
+    fn acos(self) -> Self {
+        f32::acos(self)
+    }
+    #[inline(always)]
+    fn powf(self, p: f32) -> Self {
+        f32::powf(self, p)
     }
     #[inline(always)]
     fn value(self) -> f32 {
@@ -197,6 +209,32 @@ impl<const N: usize> SampleField for Dual<N> {
         )
     }
     #[inline(always)]
+    fn acos(self) -> Self {
+        // d/dx acos(x) = -1/√(1-x²)
+        let d = -1.0 / (1.0 - self.val * self.val).sqrt();
+        let mut eps = self.eps;
+        for i in 0..N {
+            eps[i] *= d;
+        }
+        Dual {
+            val: self.val.acos(),
+            eps,
+        }
+    }
+    #[inline(always)]
+    fn powf(self, p: f32) -> Self {
+        // d/dx xᵖ = p·xᵖ⁻¹
+        let d = p * self.val.powf(p - 1.0);
+        let mut eps = self.eps;
+        for i in 0..N {
+            eps[i] *= d;
+        }
+        Dual {
+            val: self.val.powf(p),
+            eps,
+        }
+    }
+    #[inline(always)]
     fn value(self) -> f32 {
         self.val
     }
@@ -220,6 +258,20 @@ pub fn reciprocal_gram_det_2(out: &[Dual<2>; 3]) -> f32 {
     }
     let det = g00 * g11 - g01 * g01;
     1.0 / det.sqrt()
+}
+
+/// Reciprocal absolute determinant of the `3×3` Jacobian of a three-input warp:
+/// `1 / |det J|`. For a full-dimensional warp (`ℝ³ → ℝ³`) the Gram determinant
+/// `√det(JᵀJ)` reduces to `|det J|`, so this is the density w.r.t. the volume
+/// measure on the warp's image.
+#[inline(always)]
+pub fn reciprocal_det_3(out: &[Dual<3>; 3]) -> f32 {
+    // J[row][col] = ∂out[row]/∂uᶜᵒˡ
+    let j = [out[0].eps, out[1].eps, out[2].eps];
+    let det = j[0][0] * (j[1][1] * j[2][2] - j[1][2] * j[2][1])
+        - j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])
+        + j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);
+    1.0 / det.abs()
 }
 
 #[cfg(test)]
@@ -261,6 +313,35 @@ mod test {
         let f = x.sqrt();
         assert!((f.val - 2.0).abs() < 1e-6);
         assert!((f.eps[0] - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn acos_derivative() {
+        // d/dx acos(x) at x=0 is -1/√1 = -1
+        let x = Dual::<1>::variable(0.0, 0);
+        let f = x.acos();
+        assert!((f.val - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert!((f.eps[0] + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn powf_derivative() {
+        // f = x^3 at x=2: f=8, f'=3·x²=12
+        let x = Dual::<1>::variable(2.0, 0);
+        let f = x.powf(3.0);
+        assert!((f.val - 8.0).abs() < 1e-5);
+        assert!((f.eps[0] - 12.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn det3_of_diagonal() {
+        // a warp with diagonal Jacobian diag(2,3,4) → det = 24, reciprocal 1/24
+        let out = [
+            Dual::<3> { val: 0.0, eps: [2.0, 0.0, 0.0] },
+            Dual::<3> { val: 0.0, eps: [0.0, 3.0, 0.0] },
+            Dual::<3> { val: 0.0, eps: [0.0, 0.0, 4.0] },
+        ];
+        assert!((reciprocal_det_3(&out) - 1.0 / 24.0).abs() < 1e-6);
     }
 
     #[test]

@@ -8,7 +8,7 @@ pub use thermite::prelude::*;
 
 pub use crate::bounds::*;
 pub use crate::color::*;
-pub use crate::dual::{Dual, SampleField, reciprocal_gram_det_2};
+pub use crate::dual::{Dual, SampleField, reciprocal_det_3, reciprocal_gram_det_2};
 pub use crate::misc::*;
 pub use crate::pdf::*;
 pub use crate::point::Point3;

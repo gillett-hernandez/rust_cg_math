@@ -47,6 +47,31 @@ fn cosine_direction_core<F: SampleField>(u: F, v: F) -> [F; 3] {
     [c * vsqrt, s * vsqrt, z]
 }
 
+/// Spherical-coordinate map onto the unit ball. pdf = 3/(4π) wrt volume.
+#[inline(always)]
+fn in_unit_sphere_core<F: SampleField>(x: F, y: F, z: F) -> [F; 3] {
+    let u = x * F::constant(2.0 * PI);
+    let v = (y * F::constant(2.0) - F::constant(1.0)).acos();
+    let w = z.powf(1.0 / 3.0);
+    let (su, cu) = u.sin_cos();
+    let (sv, cv) = v.sin_cos();
+    [cu * sv * w, cv * w, su * sv * w]
+}
+
+/// Uniform map onto the spherical cap of half-angle `acos(√(1-k))` seen from a
+/// point, where `k = radius²/distance²`. pdf is uniform over the cap's solid
+/// angle. The cap geometry `k` is a constant w.r.t. the random inputs, so it
+/// enters as a [`SampleField::constant`].
+#[inline(always)]
+fn to_sphere_core<F: SampleField>(r1: F, r2: F, k: f32) -> [F; 3] {
+    let cos_theta_max = (F::constant(1.0) - F::constant(k)).sqrt();
+    let z = F::constant(1.0) + r2 * (cos_theta_max - F::constant(1.0));
+    let phi = r1 * F::constant(2.0 * PI);
+    let (s, c) = phi.sin_cos();
+    let sqrt_1_z2 = (F::constant(1.0) - z * z).sqrt();
+    [c * sqrt_1_z2, s * sqrt_1_z2, z]
+}
+
 #[inline(always)]
 fn vec3_of<S: Simd>(c: [f32; 3]) -> Vec3<S> {
     Vec3::new(c[0], c[1], c[2])
@@ -64,13 +89,34 @@ fn warp_with_pdf<S: Simd>(
     (v, reciprocal_gram_det_2(&out))
 }
 
+/// As [`warp_with_pdf`] but for a three-input (full-dimensional) warp; the pdf
+/// value is the reciprocal `3×3` Jacobian determinant.
+#[inline(always)]
+fn warp_with_pdf_3<S: Simd>(
+    core: impl Fn(Dual<3>, Dual<3>, Dual<3>) -> [Dual<3>; 3],
+    r: Sample3D,
+) -> (Vec3<S>, f32) {
+    let out = core(
+        Dual::variable(r.x, 0),
+        Dual::variable(r.y, 1),
+        Dual::variable(r.z, 2),
+    );
+    let v = vec3_of([out[0].value(), out[1].value(), out[2].value()]);
+    (v, reciprocal_det_3(&out))
+}
+
 /// Uniformly distributed wrt the volume measure on the unit ball.
 #[inline(always)]
 pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
-    let u = r.x * PI * 2.0;
-    let v = (2.0 * r.y - 1.0).acos();
-    let w = r.z.powf(1.0 / 3.0);
-    Vec3::new(u.cos() * v.sin() * w, v.cos() * w, u.sin() * v.sin() * w)
+    vec3_of(in_unit_sphere_core::<f32>(r.x, r.y, r.z).map(SampleField::value))
+}
+
+/// As [`random_in_unit_sphere`], but also returns the (uniform) volume pdf
+/// (`3/(4π)`) computed automatically from the warp Jacobian.
+#[inline(always)]
+pub fn random_in_unit_sphere_pdf<S: Simd>(r: Sample3D) -> (Vec3<S>, PDF<f32, Volume>) {
+    let (v, p) = warp_with_pdf_3::<S>(in_unit_sphere_core, r);
+    (v, PDF::new(p))
 }
 
 /// Uniformly distributed wrt the surface area / solid angle measure.
@@ -132,15 +178,21 @@ where
 
 #[inline(always)]
 pub fn random_to_sphere<S: Simd>(r: Sample2D, radius: f32, distance_squared: f32) -> Vec3<S> {
-    let r1 = r.x;
-    let r2 = r.y;
-    let z = 1.0 + r2 * ((1.0 - radius * radius / distance_squared).sqrt() - 1.0);
-    let phi = 2.0 * PI * r1;
-    let (mut y, mut x) = phi.sin_cos();
-    let sqrt_1_z2 = (1.0 - z * z).sqrt();
-    x *= sqrt_1_z2;
-    y *= sqrt_1_z2;
-    Vec3::new(x, y, z)
+    let k = radius * radius / distance_squared;
+    vec3_of(to_sphere_core::<f32>(r.x, r.y, k).map(SampleField::value))
+}
+
+/// As [`random_to_sphere`], but also returns the (uniform) solid-angle pdf over
+/// the subtended spherical cap, computed automatically from the warp Jacobian.
+#[inline(always)]
+pub fn random_to_sphere_pdf<S: Simd>(
+    r: Sample2D,
+    radius: f32,
+    distance_squared: f32,
+) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    let k = radius * radius / distance_squared;
+    let (v, p) = warp_with_pdf::<S>(|a, b| to_sphere_core(a, b, k), r);
+    (v, PDF::new(p))
 }
 
 #[cfg(test)]
@@ -245,6 +297,34 @@ mod tests {
             let p_psa = p.convert(DirectionalGeom { cos_theta: v.z() });
             prop_assert!((*p_psa - 1.0 / PI).abs() < 1e-3, "p_psa={}", *p_psa);
             let v2: V3 = random_cosine_direction(s);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        // restrict away from the coordinate poles/origin: the spherical-coordinate
+        // Jacobian entries blow up there (sinθ→0, c^(-2/3)→∞), so the 3×3 det is
+        // formed from huge near-cancelling terms and loses f32 precision — the
+        // analytic pdf stays a constant 3/(4π) regardless.
+        #[test]
+        fn volume_pdf_is_uniform(
+            x in 0.02f32..0.98, y in 0.05f32..0.95, z in 0.05f32..0.98,
+        ) {
+            let s = Sample3D::new(x, y, z);
+            let (v, p): (V3, PDF<f32, Volume>) = random_in_unit_sphere_pdf(s);
+            // uniform over the unit ball: 1 / (4/3 π) = 3/(4π)
+            prop_assert!((*p - 3.0 / (4.0 * PI)).abs() < 2e-3, "p={}", *p);
+            let v2: V3 = random_in_unit_sphere(s);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        #[test]
+        fn to_sphere_pdf_is_uniform_cap(s in arb_sample2d()) {
+            let (radius, dist_sq) = (1.0f32, 4.0f32);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_to_sphere_pdf(s, radius, dist_sq);
+            // uniform over the subtended cap: 1 / (2π(1 - cosθ_max))
+            let cos_theta_max = (1.0 - radius * radius / dist_sq).sqrt();
+            let expected = 1.0 / (2.0 * PI * (1.0 - cos_theta_max));
+            prop_assert!((*p - expected).abs() < 1e-3, "p={}, expected={}", *p, expected);
+            let v2: V3 = random_to_sphere(s, radius, dist_sq);
             prop_assert!((v - v2).norm() < 1e-5);
         }
     }
