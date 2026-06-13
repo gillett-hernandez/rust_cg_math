@@ -4,6 +4,7 @@
 pub mod bounds;
 pub mod color;
 pub mod curves;
+pub mod dual;
 pub mod misc;
 pub mod pdf;
 pub mod point;

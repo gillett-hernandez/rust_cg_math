@@ -1,10 +1,67 @@
 use crate::prelude::*;
-use thermite::simd::Simd;
 use thermite::register::LinAlg3Register;
+use thermite::simd::Simd;
 
 #[inline(always)]
 pub fn debug_random() -> f32 {
     rand::random()
+}
+
+// ===========================================================================
+// Generic warp cores (single source of truth for sample + pdf).
+//
+// Each `*_core` is the change-of-variables `T : [0,1)ⁿ → ℝ³` written once
+// against `SampleField`. Instantiating it with `f32` produces the sample; with
+// `Dual<2>` it additionally carries the Jacobian, from which the pdf is the
+// reciprocal Gram determinant `1/√det(JᵀJ)` (= the density w.r.t. the surface
+// measure induced on the warp's image). See `dual.rs` and the research plan.
+// ===========================================================================
+
+/// Equal-area cylindrical map onto the unit sphere. pdf = 1/(4π) wrt solid angle.
+#[inline(always)]
+fn on_unit_sphere_core<F: SampleField>(x: F, y: F) -> [F; 3] {
+    let phi = x * F::constant(2.0 * PI);
+    let z = y * F::constant(2.0) - F::constant(1.0);
+    let r = (F::constant(1.0) - z * z).sqrt();
+    let (s, c) = phi.sin_cos();
+    [r * c, r * s, z]
+}
+
+/// Concentric-free uniform disk map (`z` held at 0). pdf = 1/π wrt area.
+#[inline(always)]
+fn in_unit_disk_core<F: SampleField>(x: F, y: F) -> [F; 3] {
+    let u = x * F::constant(2.0 * PI);
+    let v = y.sqrt();
+    let (s, c) = u.sin_cos();
+    [c * v, s * v, F::constant(0.0)]
+}
+
+/// Cosine-weighted hemisphere map. pdf = cosθ/π wrt solid angle (1/π wrt
+/// projected solid angle — reach it with `pdf.convert(DirectionalGeom{..})`).
+#[inline(always)]
+fn cosine_direction_core<F: SampleField>(u: F, v: F) -> [F; 3] {
+    let z = (F::constant(1.0) - v).sqrt();
+    let phi = u * F::constant(2.0 * PI);
+    let (s, c) = phi.sin_cos();
+    let vsqrt = v.sqrt();
+    [c * vsqrt, s * vsqrt, z]
+}
+
+#[inline(always)]
+fn vec3_of<S: Simd>(c: [f32; 3]) -> Vec3<S> {
+    Vec3::new(c[0], c[1], c[2])
+}
+
+/// Run a 2-input warp core on dual inputs and split into (sample, pdf-value),
+/// where the pdf value is the reciprocal Gram determinant of the warp Jacobian.
+#[inline(always)]
+fn warp_with_pdf<S: Simd>(
+    core: impl Fn(Dual<2>, Dual<2>) -> [Dual<2>; 3],
+    r: Sample2D,
+) -> (Vec3<S>, f32) {
+    let out = core(Dual::variable(r.x, 0), Dual::variable(r.y, 1));
+    let v = vec3_of([out[0].value(), out[1].value(), out[2].value()]);
+    (v, reciprocal_gram_det_2(&out))
 }
 
 /// Uniformly distributed wrt the volume measure on the unit ball.
@@ -19,36 +76,44 @@ pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
 /// Uniformly distributed wrt the surface area / solid angle measure.
 #[inline(always)]
 pub fn random_on_unit_sphere<S: Simd>(r: Sample2D) -> Vec3<S> {
-    let Sample2D { x, y } = r;
+    vec3_of(on_unit_sphere_core::<f32>(r.x, r.y).map(SampleField::value))
+}
 
-    let phi = x * 2.0 * PI;
-    let z = y * 2.0 - 1.0;
-    let r = (1.0 - z * z).sqrt();
-
-    let (s, c) = phi.sin_cos();
-
-    Vec3::new(r * c, r * s, z)
+/// As [`random_on_unit_sphere`], but also returns the (uniform) solid-angle pdf
+/// computed automatically from the warp Jacobian.
+#[inline(always)]
+pub fn random_on_unit_sphere_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    let (v, p) = warp_with_pdf::<S>(on_unit_sphere_core, r);
+    (v, PDF::new(p))
 }
 
 /// Uniformly distributed wrt the area measure on the unit disk.
 #[inline(always)]
 pub fn random_in_unit_disk<S: Simd>(r: Sample2D) -> Vec3<S> {
-    let u: f32 = r.x * PI * 2.0;
-    let v: f32 = r.y.powf(1.0 / 2.0);
-    Vec3::new(u.cos() * v, u.sin() * v, 0.0)
+    vec3_of(in_unit_disk_core::<f32>(r.x, r.y).map(SampleField::value))
+}
+
+/// As [`random_in_unit_disk`], but also returns the (uniform) area pdf computed
+/// automatically from the warp Jacobian.
+#[inline(always)]
+pub fn random_in_unit_disk_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, Area>) {
+    let (v, p) = warp_with_pdf::<S>(in_unit_disk_core, r);
+    (v, PDF::new(p))
 }
 
 /// Cosine-weighted hemisphere direction. Uniform wrt projected solid angle.
 #[inline(always)]
 pub fn random_cosine_direction<S: Simd>(r: Sample2D) -> Vec3<S> {
-    let Sample2D { x: u, y: v } = r;
-    let z: f32 = (1.0 - v).sqrt();
-    let phi: f32 = 2.0 * PI * u;
-    let (mut y, mut x) = phi.sin_cos();
-    let vsqrt = v.sqrt();
-    x *= vsqrt;
-    y *= vsqrt;
-    Vec3::new(x, y, z)
+    vec3_of(cosine_direction_core::<f32>(r.x, r.y).map(SampleField::value))
+}
+
+/// As [`random_cosine_direction`], but also returns the solid-angle pdf
+/// (`cosθ/π`) computed automatically from the warp Jacobian. Convert to a
+/// projected-solid-angle pdf (`1/π`) with `pdf.convert(DirectionalGeom { .. })`.
+#[inline(always)]
+pub fn random_cosine_direction_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    let (v, p) = warp_with_pdf::<S>(cosine_direction_core, r);
+    (v, PDF::new(p))
 }
 
 #[inline(always)]
@@ -145,6 +210,42 @@ mod tests {
             prop_assert!((n - 1.0).abs() < 1e-3, "||v||={}", n);
             let cos_theta_max = (1.0 - 1.0 / 4.0f32).sqrt();
             prop_assert!(v.z() >= cos_theta_max - 1e-3, "z={} < threshold={}", v.z(), cos_theta_max);
+        }
+
+        // ---- auto-pdf (dual-number) warps --------------------------------
+        // Each asserts the pdf computed from the warp Jacobian matches the
+        // known closed form, and that the sample equals the value-path warp.
+
+        #[test]
+        fn sphere_pdf_is_uniform_solid_angle(s in arb_sample2d()) {
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_on_unit_sphere_pdf(s);
+            // pdf is uniform over the sphere: 1/(4π)
+            prop_assert!((*p - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", *p);
+            // sample agrees with the value-only path
+            let v2: V3 = random_on_unit_sphere(s);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        #[test]
+        fn disk_pdf_is_uniform_area(s in arb_sample2d()) {
+            let (v, p): (V3, PDF<f32, Area>) = random_in_unit_disk_pdf(s);
+            // pdf is uniform over the unit disk: 1/π
+            prop_assert!((*p - 1.0 / PI).abs() < 1e-4, "p={}", *p);
+            let v2: V3 = random_in_unit_disk(s);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        #[test]
+        fn cosine_pdf_matches_cos_over_pi(s in arb_sample2d()) {
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_cosine_direction_pdf(s);
+            // solid-angle pdf of cosine-weighted sampling is cosθ/π = z/π
+            let expected = v.z() / PI;
+            prop_assert!((*p - expected).abs() < 1e-3, "p={}, expected={}", *p, expected);
+            // converting to projected solid angle gives the uniform 1/π
+            let p_psa = p.convert(DirectionalGeom { cos_theta: v.z() });
+            prop_assert!((*p_psa - 1.0 / PI).abs() < 1e-3, "p_psa={}", *p_psa);
+            let v2: V3 = random_cosine_direction(s);
+            prop_assert!((v - v2).norm() < 1e-5);
         }
     }
 }
