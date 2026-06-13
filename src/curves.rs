@@ -978,6 +978,296 @@ mod test {
         }
     }
 
+    // register used for the Vector<R> SPD paths below
+    type R4 = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+    type S4 = thermite::backend::scalar::Scalar;
+
+    fn assert_lanes_match_scalar(v: Vector<R4>, scalar: f32, tol: f32) {
+        for lane in v.into_array() {
+            assert!(
+                (lane - scalar).abs() <= tol,
+                "lane {} vs scalar {} (tol {})",
+                lane,
+                scalar,
+                tol
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_curve() {
+        let c = Curve::default();
+        assert!(matches!(c, Curve::Const(v) if v == 0.0));
+        assert_eq!(c.evaluate(123.0), 0.0);
+    }
+
+    #[test]
+    fn test_linear_nearest_and_cubic_modes() {
+        let signal = vec![0.0, 1.0, 0.0];
+        let bounds = Bounds1D::new(0.0, 2.0);
+        // sample at x=0.25 (t=0.25 within first segment) for Nearest -> left (0.0)
+        let nearest = Curve::Linear {
+            signal: signal.clone(),
+            bounds,
+            mode: InterpolationMode::Nearest,
+        };
+        assert_eq!(nearest.evaluate(0.25), 0.0);
+        assert_eq!(nearest.evaluate(0.75), 1.0); // t=0.75 -> right (1.0)
+
+        // cubic Hermite at the segment midpoint is between the endpoints
+        let cubic = Curve::Linear {
+            signal,
+            bounds,
+            mode: InterpolationMode::Cubic,
+        };
+        let mid = cubic.evaluate(0.5);
+        assert!(mid > 0.0 && mid < 1.0, "cubic mid {}", mid);
+        // clamped extension below/above bounds returns the endpoints
+        assert_eq!(cubic.evaluate(-1.0), 0.0);
+        assert_eq!(cubic.evaluate(5.0), 0.0);
+    }
+
+    #[test]
+    fn test_tabulated_modes_and_edges() {
+        let signal = vec![(400.0, 0.0), (500.0, 1.0), (600.0, 0.0)];
+        let lin = Curve::Tabulated {
+            signal: signal.clone(),
+            mode: InterpolationMode::Linear,
+        };
+        // below first sample -> first value; above last -> last value
+        assert_eq!(lin.evaluate(350.0), 0.0);
+        assert_eq!(lin.evaluate(700.0), 0.0);
+        // interior linear interpolation
+        assert!((lin.evaluate(450.0) - 0.5).abs() < 1e-5);
+
+        let near = Curve::Tabulated {
+            signal: signal.clone(),
+            mode: InterpolationMode::Nearest,
+        };
+        assert_eq!(near.evaluate(450.0), 1.0); // t=0.5: `t < 0.5` is false -> right (1.0)
+        assert_eq!(near.evaluate(420.0), 0.0); // t=0.2 -> left (0.0)
+
+        let cubic = Curve::Tabulated {
+            signal,
+            mode: InterpolationMode::Cubic,
+        };
+        let v = cubic.evaluate(450.0);
+        assert!(v >= 0.0 && v <= 1.0, "tabulated cubic {}", v);
+    }
+
+    #[test]
+    fn test_blackbody_unboosted() {
+        // boost == 0.0 takes the raw-blackbody branch.
+        let raw = Curve::Blackbody {
+            temperature: 5000.0,
+            boost: 0.0,
+        };
+        // boost==0 returns raw blackbody (approx: optimized build may contract FMAs differently)
+        let expected = blackbody(5000.0, 550.0);
+        assert!((raw.evaluate(550.0) - expected).abs() <= expected.abs() * 1e-5);
+    }
+
+    #[test]
+    fn test_evaluate_integral_blackbody_clamped_and_unclamped() {
+        let bb = Curve::Blackbody {
+            temperature: 5000.0,
+            boost: 1.0,
+        };
+        let bounds = Bounds1D::new(400.0, 700.0);
+        // even sample count exercises the samples+1 odd-ing branch
+        let unclamped = bb.evaluate_integral(bounds, 64, false);
+        let clamped = bb.evaluate_integral(bounds, 64, true);
+        assert!(unclamped > 0.0, "unclamped {}", unclamped);
+        assert!(clamped > 0.0 && clamped <= unclamped + 1e-3, "clamped {}", clamped);
+    }
+
+    #[test]
+    fn test_evaluate_integral_linear_extends_beyond_signal() {
+        // signal spans [0,2]; integrate over [-1, 3] so both constant-extension
+        // branches (below sb_lo and above sb_hi) run, clamped and unclamped.
+        let curve = Curve::Linear {
+            signal: vec![1.0, 1.0, 1.0],
+            bounds: Bounds1D::new(0.0, 2.0),
+            mode: InterpolationMode::Linear,
+        };
+        // exercises both constant-extension branches plus the in-signal region;
+        // both clamped and unclamped are positive, and clamping cannot increase the integral.
+        let unclamped = curve.evaluate_integral(Bounds1D::new(-1.0, 3.0), 50, false);
+        let clamped = curve.evaluate_integral(Bounds1D::new(-1.0, 3.0), 50, true);
+        assert!(unclamped > 0.0, "unclamped {}", unclamped);
+        assert!(clamped > 0.0 && clamped <= unclamped + 1e-6, "clamped {}, unclamped {}", clamped, unclamped);
+    }
+
+    #[test]
+    fn test_evaluate_integral_simpson_fallback() {
+        // a non-linear, non-const curve hits the simpson `_` arm.
+        let cauchy = Curve::Cauchy { a: 1.5, b: 5000.0 };
+        let integral = cauchy.evaluate_integral(Bounds1D::new(400.0, 700.0), 200, false);
+        assert!(integral > 0.0, "cauchy integral {}", integral);
+        // a non-Linear-mode Linear curve also falls through to simpson
+        let near = Curve::Linear {
+            signal: vec![0.0, 1.0, 0.0],
+            bounds: Bounds1D::new(0.0, 2.0),
+            mode: InterpolationMode::Nearest,
+        };
+        let i2 = near.evaluate_integral(Bounds1D::new(0.0, 2.0), 200, true);
+        assert!(i2 >= 0.0, "nearest integral {}", i2);
+    }
+
+    #[test]
+    fn test_convert_to_xyz_clamped_and_unclamped() {
+        let curve = Curve::y_bar();
+        let unclamped: XYZColor<S4> =
+            curve.convert_to_xyz(BOUNDED_VISIBLE_RANGE, 1.0, false);
+        let clamped: XYZColor<S4> = curve.convert_to_xyz(BOUNDED_VISIBLE_RANGE, 1.0, true);
+        assert!(unclamped.y() > 0.0, "unclamped Y {}", unclamped.y());
+        assert!(clamped.y() > 0.0, "clamped Y {}", clamped.y());
+        assert!(unclamped.x().is_finite() && unclamped.z().is_finite());
+    }
+
+    #[test]
+    fn test_vector_spd_matches_scalar() {
+        let curves = [
+            Curve::Const(0.7),
+            Curve::Cauchy { a: 1.5, b: 5000.0 },
+            Curve::Blackbody { temperature: 5000.0, boost: 1.0 },
+            Curve::Blackbody { temperature: 5000.0, boost: 0.0 },
+            Curve::Polynomial {
+                domain_range_mapping: [600.0, 200.0, 0.1, 1.0],
+                coefficients: [0.1, -0.05, 0.02, 0.0, 0.0, 0.0, 0.0, 0.0],
+            },
+            Curve::Exponential {
+                signal: vec![(568.0, 46.9, 40.5, 0.821)],
+            },
+            Curve::InverseExponential {
+                signal: vec![(568.0, 46.9, 40.5, 0.5)],
+            },
+            // Linear hits the per-lane scalar map fallback
+            Curve::Linear {
+                signal: vec![0.2, 0.8, 0.5],
+                bounds: Bounds1D::new(400.0, 700.0),
+                mode: InterpolationMode::Linear,
+            },
+        ];
+        let lambda = 550.0f32;
+        let v = Vector::<R4>::splat(lambda);
+        for c in &curves {
+            let scalar_power = SpectralPowerDistributionFunction::<f32>::evaluate_power(c, lambda);
+            let vec_power =
+                SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_power(c, v);
+            let tol = (scalar_power.abs() * 1e-3).max(1e-4);
+            assert_lanes_match_scalar(vec_power, scalar_power, tol);
+
+            let scalar_clamped =
+                SpectralPowerDistributionFunction::<f32>::evaluate_clamped(c, lambda);
+            let vec_clamped =
+                SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_clamped(c, v);
+            assert_lanes_match_scalar(vec_clamped, scalar_clamped, 1e-4);
+
+            // sample_power_and_pdf: pdf is the uniform 1/span on the vector path
+            let (we, pdf) = SpectralPowerDistributionFunction::<Vector<R4>>::sample_power_and_pdf(
+                c,
+                BOUNDED_VISIBLE_RANGE,
+                Sample1D::new(0.5),
+            );
+            assert!(we.lambda.extract::<0>() >= BOUNDED_VISIBLE_RANGE.lower);
+            assert_lanes_match_scalar(*pdf, 1.0 / BOUNDED_VISIBLE_RANGE.span(), 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_curve_with_cdf_scalar_sampling() {
+        // Linear cdf path (to_cdf on a Linear curve keeps the analytic signal).
+        let curve = Curve::Linear {
+            signal: vec![0.0, 1.0, 1.0, 0.0],
+            bounds: BOUNDED_VISIBLE_RANGE,
+            mode: InterpolationMode::Linear,
+        };
+        let cdf = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        // evaluate_power / evaluate_clamped delegate to the pdf curve
+        let p = SpectralPowerDistributionFunction::<f32>::evaluate_power(&cdf, 580.0);
+        assert!(p >= 0.0, "power {}", p);
+        let pc = SpectralPowerDistributionFunction::<f32>::evaluate_clamped(&cdf, 580.0);
+        assert!((0.0..1.0).contains(&pc), "clamped {}", pc);
+        // importance-sample: lambda in range, pdf finite and non-negative
+        let (sw, pdf) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+            &cdf,
+            BOUNDED_VISIBLE_RANGE,
+            Sample1D::new(0.4),
+        );
+        assert!(sw.lambda >= BOUNDED_VISIBLE_RANGE.lower && sw.lambda <= BOUNDED_VISIBLE_RANGE.upper);
+        assert!(*pdf >= 0.0, "pdf {}", *pdf);
+    }
+
+    #[test]
+    fn test_curve_with_cdf_const_and_fallback_arms() {
+        // Const cdf arm: manually build a CurveWithCDF whose cdf is Const.
+        let const_cdf = CurveWithCDF {
+            pdf: Curve::Const(2.0),
+            cdf: Curve::Const(0.5),
+            pdf_integral: 4.0,
+        };
+        let (sw, pdf) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+            &const_cdf,
+            BOUNDED_VISIBLE_RANGE,
+            Sample1D::new(0.5),
+        );
+        assert_eq!(sw.energy, 0.5);
+        assert!((*pdf - 1.0 / 4.0).abs() < 1e-6);
+
+        // `_` fallback arm: cdf is neither Const nor Linear.
+        let fallback = CurveWithCDF {
+            pdf: Curve::Const(1.0),
+            cdf: Curve::Cauchy { a: 1.0, b: 1.0 },
+            pdf_integral: 1.0,
+        };
+        let (sw2, _pdf2) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+            &fallback,
+            BOUNDED_VISIBLE_RANGE,
+            Sample1D::new(0.5),
+        );
+        assert!(sw2.lambda >= BOUNDED_VISIBLE_RANGE.lower);
+    }
+
+    #[test]
+    fn test_curve_with_cdf_vector_sampling() {
+        let curve = Curve::Linear {
+            signal: vec![0.0, 1.0, 1.0, 0.0],
+            bounds: BOUNDED_VISIBLE_RANGE,
+            mode: InterpolationMode::Linear,
+        };
+        let cdf = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        let v = Vector::<R4>::splat(580.0);
+        let p = SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_power(&cdf, v);
+        for lane in p.into_array() {
+            assert!(lane >= 0.0, "power lane {}", lane);
+        }
+        let (we, pdf) = SpectralPowerDistributionFunction::<Vector<R4>>::sample_power_and_pdf(
+            &cdf,
+            BOUNDED_VISIBLE_RANGE,
+            Sample1D::new(0.4),
+        );
+        assert!(we.lambda.extract::<0>() >= BOUNDED_VISIBLE_RANGE.lower);
+        for lane in (*pdf).into_array() {
+            assert!(lane.is_finite(), "pdf lane {}", lane);
+        }
+
+        // Const cdf vector arm
+        let const_cdf = CurveWithCDF {
+            pdf: Curve::Const(2.0),
+            cdf: Curve::Const(0.5),
+            pdf_integral: 4.0,
+        };
+        let (cwe, _cpdf) =
+            SpectralPowerDistributionFunction::<Vector<R4>>::sample_power_and_pdf(
+                &const_cdf,
+                BOUNDED_VISIBLE_RANGE,
+                Sample1D::new(0.5),
+            );
+        // the Const arm splats the cdf's constant value (0.5) into the energy
+        assert_eq!(cwe.energy.extract::<0>(), 0.5);
+    }
+
     #[test]
     fn test_clamped_integral_with_crossing() {
         // Signal [0.0, 3.0] over bounds [0, 1]: step = 0.5, one segment [0, 0.5] with y = 6x.

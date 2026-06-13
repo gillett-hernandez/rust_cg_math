@@ -282,6 +282,20 @@ mod test {
         );
     }
     #[test]
+    fn test_random_sampler_2d_and_3d() {
+        let mut sampler = RandomSampler::new();
+        for _ in 0..10000 {
+            let s2 = sampler.draw_2d();
+            assert!(0.0 <= s2.x && s2.x < 1.0, "2d x={}", s2.x);
+            assert!(0.0 <= s2.y && s2.y < 1.0, "2d y={}", s2.y);
+            let s3 = sampler.draw_3d();
+            assert!(0.0 <= s3.x && s3.x < 1.0, "3d x={}", s3.x);
+            assert!(0.0 <= s3.y && s3.y < 1.0, "3d y={}", s3.y);
+            assert!(0.0 <= s3.z && s3.z < 1.0, "3d z={}", s3.z);
+        }
+    }
+
+    #[test]
     fn test_stratified_sampler_1d() {
         let mut sampler = Box::new(StratifiedSampler::new(20, 20, 10));
         let n = 100000;

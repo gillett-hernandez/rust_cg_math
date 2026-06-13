@@ -123,6 +123,32 @@ mod tests {
         assert_eq!(r.tmax, INFINITY);
     }
 
+    #[test]
+    fn test_debug_and_clone() {
+        let r = R::new(P3::new(1.0, 2.0, 3.0), V3::x_axis());
+        let s = format!("{:?}", r);
+        assert!(s.contains("Ray"));
+        let c = r.clone();
+        assert_eq!(c.origin, r.origin);
+        assert_eq!(c.tmax, r.tmax);
+    }
+
+    #[test]
+    fn test_new_with_time_and_tmax() {
+        let r = R::new_with_time_and_tmax(P3::origin(), V3::z_axis(), 1.5, 42.0);
+        assert_eq!(r.time, 1.5);
+        assert_eq!(r.tmax, 42.0);
+        assert_eq!(r.origin, P3::origin());
+    }
+
+    #[test]
+    fn test_at_time_advances_origin() {
+        let r = R::new(P3::origin(), V3::x_axis());
+        let advanced = r.at_time(5.0);
+        let diff = (advanced.origin - P3::new(5.0, 0.0, 0.0)).norm();
+        assert!(diff < 1e-5, "origin not advanced: {:?}", advanced.origin);
+    }
+
     proptest! {
         #[test]
         fn point_at_zero_is_origin(origin in arb_point3(), dir in arb_direction()) {

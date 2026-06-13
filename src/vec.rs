@@ -312,6 +312,53 @@ mod tests {
         assert_eq!(V3::from_axis(Axis::Z), V3::z_axis());
     }
 
+    #[test]
+    fn test_debug_and_clone() {
+        let v = V3::new(1.0, 2.0, 3.0);
+        let s = format!("{:?}", v);
+        assert!(s.contains("Vec3"));
+        assert!(s.contains('1') && s.contains('2') && s.contains('3'));
+        // Clone goes through the manual impl (derive would add a bogus S: Clone bound).
+        let c = v.clone();
+        assert_eq!(c, v);
+    }
+
+    #[test]
+    fn test_mul_assign() {
+        let mut v = V3::new(2.0, 3.0, 4.0);
+        v *= V3::new(5.0, 6.0, 7.0);
+        // component-wise multiply (unlike Mul, which is the dot product)
+        assert_eq!(v.x(), 10.0);
+        assert_eq!(v.y(), 18.0);
+        assert_eq!(v.z(), 28.0);
+    }
+
+    #[test]
+    fn test_from_f32() {
+        let v: V3 = 5.0f32.into();
+        assert_eq!(v.x(), 5.0);
+        assert_eq!(v.y(), 5.0);
+        assert_eq!(v.z(), 5.0);
+        assert_eq!(v.w(), 0.0);
+    }
+
+    #[test]
+    fn test_from_arrays() {
+        let a: V3 = [1.0, 2.0, 3.0].into();
+        assert_eq!(a.as_array(), [1.0, 2.0, 3.0, 0.0]);
+        let b: V3 = [4.0, 5.0, 6.0, 7.0].into();
+        assert_eq!(b.as_array(), [4.0, 5.0, 6.0, 7.0]);
+    }
+
+    #[test]
+    fn test_vector_conversions() {
+        let v = V3::new(1.0, 2.0, 3.0);
+        // Vec3 -> Vector<S::f32x4> and back.
+        let raw: Vector<<TestS as thermite::simd::Simd>::f32x4> = v.into();
+        let back: V3 = raw.into();
+        assert_eq!(back, v);
+    }
+
     proptest! {
         #[test]
         fn dot_product_commutative(a in arb_vec3(), b in arb_vec3()) {

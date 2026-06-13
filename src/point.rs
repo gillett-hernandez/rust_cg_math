@@ -269,4 +269,38 @@ mod tests {
         assert!(!P3::infinity().is_finite());
         assert!(!P3::neg_infinity().is_finite());
     }
+
+    #[test]
+    fn test_debug_and_clone() {
+        let p = P3::new(1.0, 2.0, 3.0);
+        let s = format!("{:?}", p);
+        assert!(s.contains("Point3"));
+        let c = p.clone();
+        assert_eq!(c, p);
+    }
+
+    #[test]
+    fn test_as_array() {
+        let p = P3::new(1.0, 2.0, 3.0);
+        assert_eq!(p.as_array(), [1.0, 2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn test_add_assign_sub_assign() {
+        let mut p = P3::new(1.0, 2.0, 3.0);
+        p += V3::new(10.0, 20.0, 30.0);
+        assert_eq!(p, P3::new(11.0, 22.0, 33.0));
+        p -= V3::new(1.0, 2.0, 3.0);
+        assert_eq!(p, P3::new(10.0, 20.0, 30.0));
+    }
+
+    #[test]
+    fn test_from_vector_and_into_vec3() {
+        let raw = Vector::<<TestS as thermite::simd::Simd>::f32x4>::new([1.0, 2.0, 3.0, 1.0]);
+        let p: P3 = raw.into();
+        assert_eq!(p, P3::new(1.0, 2.0, 3.0));
+        // Point3 -> Vec3 drops the w lane.
+        let v: V3 = p.into();
+        assert_eq!(v.as_array(), [1.0, 2.0, 3.0, 0.0]);
+    }
 }

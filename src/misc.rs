@@ -295,6 +295,47 @@ mod test {
         }
 
         #[test]
+        fn power_heuristic_v_matches_scalar(a in 0.01f32..100.0, b in 0.01f32..100.0) {
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+            let r = power_heuristic_v(Vector::<TestR>::splat(a), Vector::<TestR>::splat(b));
+            let s = power_heuristic(a, b);
+            for lane in r.into_array() {
+                prop_assert!((lane - s).abs() < 1e-5, "lane {} vs scalar {}", lane, s);
+            }
+        }
+
+        #[test]
+        fn gaussian_v_matches_scalar(x in -100.0f32..100.0) {
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+            let (alpha, mu, s1, s2) = (1.0f32, 5.0f32, 10.0f32, 20.0f32);
+            let r = gaussian_v(Vector::<TestR>::splat(x), alpha, mu, s1, s2);
+            let s = gaussianf32(x, alpha, mu, s1, s2);
+            for lane in r.into_array() {
+                prop_assert!((lane - s).abs() < 1e-4, "lane {} vs scalar {}", lane, s);
+            }
+        }
+
+        #[test]
+        fn blackbody_v_matches_scalar(temp in 1000.0f32..10000.0, lambda in 300.0f32..900.0) {
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+            let r = blackbody_v(temp, Vector::<TestR>::splat(lambda));
+            let s = blackbody(temp, lambda);
+            let tol = (s.abs() * 1e-3).max(1e-6);
+            for lane in r.into_array() {
+                prop_assert!((lane - s).abs() < tol, "lane {} vs scalar {}", lane, s);
+            }
+        }
+
+        #[test]
+        fn w_peaks_at_offset(offset in -10.0f32..10.0, x in -10.0f32..10.0, sigma in 0.5f32..5.0) {
+            // the asymmetric gaussian-ish `w` is positive and maximal at x == offset.
+            let at_peak = w(offset, 1.0, offset, sigma);
+            let at_x = w(x, 1.0, offset, sigma);
+            prop_assert!(at_x >= 0.0, "w should be non-negative, got {}", at_x);
+            prop_assert!(at_peak >= at_x - 1e-6, "peak {} < w(x) {}", at_peak, at_x);
+        }
+
+        #[test]
         fn uv_to_direction_unit_length(u in 0.01f32..0.99, v in 0.01f32..0.99) {
             let dir: V3 = uv_to_direction((u, v));
             let n = dir.norm();

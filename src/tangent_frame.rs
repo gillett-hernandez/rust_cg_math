@@ -113,7 +113,42 @@ mod tests {
         (-10.0f32..10.0, -10.0f32..10.0, -10.0f32..10.0).prop_map(|(x, y, z)| V3::new(x, y, z))
     }
 
+    #[test]
+    fn test_debug_and_clone() {
+        let frame = TF::new(V3::x_axis(), V3::y_axis(), V3::z_axis());
+        let s = format!("{:?}", frame);
+        assert!(s.contains("TangentFrame"));
+        let c = frame.clone();
+        assert_eq!((c.tangent - frame.tangent).norm(), 0.0);
+        assert_eq!((c.normal - frame.normal).norm(), 0.0);
+    }
+
+    #[test]
+    fn test_new_normalizes_axis_basis() {
+        // feed a (scaled) orthogonal basis; new() normalizes each vector.
+        let frame = TF::new(
+            V3::new(2.0, 0.0, 0.0),
+            V3::new(0.0, 3.0, 0.0),
+            V3::new(0.0, 0.0, 4.0),
+        );
+        assert!((frame.tangent.norm() - 1.0).abs() < 1e-6);
+        assert!((frame.bitangent.norm() - 1.0).abs() < 1e-6);
+        assert!((frame.normal.norm() - 1.0).abs() < 1e-6);
+    }
+
     proptest! {
+        #[test]
+        fn from_tangent_and_normal_is_orthonormal(n in arb_unit_vec3()) {
+            // pick a tangent that isn't parallel to the normal
+            let seed = if n.x().abs() < 0.9 { V3::x_axis() } else { V3::y_axis() };
+            let tangent = (seed - n * (seed * n)).normalized();
+            let frame = TF::from_tangent_and_normal(tangent, n);
+            prop_assert!((frame.tangent.norm() - 1.0).abs() < 1e-4);
+            prop_assert!((frame.bitangent.norm() - 1.0).abs() < 1e-4);
+            prop_assert!((frame.normal.norm() - 1.0).abs() < 1e-4);
+            prop_assert!((frame.bitangent * frame.normal).abs() < 1e-3, "bitangent not ⊥ normal");
+        }
+
         #[test]
         fn from_normal_produces_orthonormal_basis(n in arb_unit_vec3()) {
             let frame = TF::from_normal(n);

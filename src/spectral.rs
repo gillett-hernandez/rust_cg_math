@@ -234,5 +234,33 @@ mod tests {
             prop_assert_eq!(replaced.lambda, lambda);
             prop_assert_eq!(replaced.energy, e2);
         }
+
+        #[test]
+        fn cie_vector_observers_match_scalar(lambda in 380.0f32..780.0) {
+            // x_bar_v/y_bar_v/z_bar_v must agree lane-by-lane with the scalar fits.
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+            let angstroms = lambda * 10.0;
+            let v = Vector::<TestR>::splat(angstroms);
+            for (got, want) in [
+                (x_bar_v(v), x_bar(angstroms)),
+                (y_bar_v(v), y_bar(angstroms)),
+                (z_bar_v(v), z_bar(angstroms)),
+            ] {
+                for lane in got.into_array() {
+                    prop_assert!((lane - want).abs() < 1e-4, "lane {} vs scalar {}", lane, want);
+                }
+            }
+        }
+
+        #[test]
+        fn hero_wavelength_to_xyz_non_negative_y(sample in 0.001f32..0.999, energy in 0.1f32..5.0) {
+            // exercise the Vector<R> -> XYZColor conversion impl.
+            type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+            type TestS = thermite::backend::scalar::Scalar;
+            let we = HeroWavelength::<TestR>::new_from_range(sample, BOUNDED_VISIBLE_RANGE)
+                .replace_energy(Vector::<TestR>::splat(energy));
+            let xyz: XYZColor<TestS> = we.into();
+            prop_assert!(xyz.y() >= 0.0, "summed Y should be non-negative, got {}", xyz.y());
+        }
     }
 }

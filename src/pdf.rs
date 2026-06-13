@@ -473,6 +473,61 @@ mod test {
     }
 
     #[test]
+    fn pdf_deref_mut_and_mul() {
+        let mut p: PDF<f32, Area> = PDF::new(2.0);
+        *p += 1.0; // DerefMut
+        assert_eq!(*p, 3.0);
+        let scaled = p * 4.0; // Mul<T>
+        assert_eq!(*scaled, 12.0);
+    }
+
+    #[test]
+    fn integrand_deref_and_from() {
+        let f: Integrand<f32, Area> = 5.0.into(); // From<T>
+        assert_eq!(*f, 5.0); // Deref
+    }
+
+    #[test]
+    fn estimate_add_and_scale() {
+        let a = Estimate::<f32>::new(2.0);
+        let b = Estimate::<f32>::new(3.0);
+        assert_eq!(*(a + b), 5.0); // Add
+        let mut acc = a;
+        acc += b; // AddAssign
+        assert_eq!(*acc, 5.0);
+        assert_eq!(*(a * 10.0), 20.0); // Mul<T>
+    }
+
+    #[test]
+    fn convert_projected_to_solid_angle() {
+        // dσ⊥ → dσ multiplies by |cosθ| (the reverse of solid→projected).
+        let p_psa: PDF<f32, ProjectedSolidAngle> = PDF::new(4.0);
+        let p_sa: PDF<f32, SA> = p_psa.convert(DirectionalGeom { cos_theta: 0.25 });
+        assert!((*p_sa - 1.0).abs() < 1e-6, "got {}", *p_sa);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn deprecated_conversions_match_convert() {
+        // The legacy convert_to_* methods delegate to `convert`; assert they agree.
+        let p_sa: PDF<f32, SA> = PDF::new(0.5);
+        let to_psa = p_sa.convert_to_projected_solid_angle(0.5f32);
+        let expect_psa: PDF<f32, ProjectedSolidAngle> =
+            p_sa.convert(DirectionalGeom { cos_theta: 0.5 });
+        assert!((*to_psa - *expect_psa).abs() < 1e-6);
+
+        let p_area: PDF<f32, Area> = PDF::new(0.5);
+        let to_sa = p_area.convert_to_solid_angle(0.5f32, 4.0f32);
+        let expect_sa: PDF<f32, SA> = p_area.convert(AreaGeom { cos_theta: 0.5, dist_sq: 4.0 });
+        assert!((*to_sa - *expect_sa).abs() < 1e-6);
+
+        let to_psa2 = p_area.convert_to_projected_solid_angle(0.5f32, 0.5f32, 4.0f32);
+        let expect_psa2: PDF<f32, ProjectedSolidAngle> =
+            p_area.convert(EdgeGeom { cos_i: 0.5, cos_o: 0.5, dist_sq: 4.0 });
+        assert!((*to_psa2 - *expect_psa2).abs() < 1e-6);
+    }
+
+    #[test]
     fn solid_angle_is_chart_independent() {
         // The whole point of TODO #4: `SolidAngle` is one measure over the
         // `Directions` domain, no longer parameterized by the chart. A density

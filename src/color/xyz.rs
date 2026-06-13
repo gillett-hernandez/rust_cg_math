@@ -141,6 +141,34 @@ mod tests {
         assert_eq!(result.z(), c.z());
     }
 
+    #[test]
+    fn test_debug_and_clone() {
+        let c = C::new(1.0, 2.0, 3.0);
+        let s = format!("{:?}", c);
+        assert!(s.contains("XYZColor"));
+        let cloned = c.clone();
+        assert_eq!(cloned.x(), c.x());
+        assert_eq!(cloned.y(), c.y());
+        assert_eq!(cloned.z(), c.z());
+    }
+
+    #[test]
+    fn test_zero_is_black() {
+        let z = C::zero();
+        assert_eq!(z.x(), 0.0);
+        assert_eq!(z.y(), 0.0);
+        assert_eq!(z.z(), 0.0);
+    }
+
+    #[test]
+    fn test_into_vector() {
+        let c = C::new(1.0, 2.0, 3.0);
+        let raw: Vector<<TestS as Simd>::f32x4> = c.into();
+        assert_eq!(raw.extract::<0>(), 1.0);
+        assert_eq!(raw.extract::<1>(), 2.0);
+        assert_eq!(raw.extract::<2>(), 3.0);
+    }
+
     proptest! {
         #[test]
         fn component_access(x in 0.0f32..10.0, y in 0.0f32..10.0, z in 0.0f32..10.0) {

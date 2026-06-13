@@ -567,6 +567,71 @@ mod tests {
     }
 
     #[test]
+    fn matrix_debug_clone_eq() {
+        let m = M4::identity();
+        let s = format!("{:?}", m);
+        assert!(s.contains("Matrix4x4"));
+        let c = m.clone();
+        assert_eq!(c, m); // PartialEq
+        assert_ne!(m, M4::from_array([2.0; 16]));
+    }
+
+    #[test]
+    fn matrix_transpose_involution() {
+        let m = M4::from_array([
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
+        ]);
+        assert_eq!(m.transpose().transpose(), m);
+        // transpose swaps off-diagonal column/row entries
+        let mt = m.transpose();
+        assert_eq!(mt.as_array()[1], m.as_array()[4]);
+    }
+
+    #[test]
+    fn matrix_try_inverse_singular_is_none() {
+        // a zero matrix is singular -> no inverse
+        assert!(M4::from_array([0.0; 16]).try_inverse().is_none());
+        // a rank-deficient matrix (two identical columns) is also singular
+        let mut vals = [0.0f32; 16];
+        vals[0] = 1.0;
+        vals[5] = 1.0;
+        vals[10] = 1.0;
+        // leave the 4th column all-zero -> det 0
+        assert!(M4::from_array(vals).try_inverse().is_none());
+    }
+
+    #[test]
+    fn matrix_times_ray() {
+        let t = T3::from_translation(V3::new(1.0, 2.0, 3.0));
+        let ray = Ray::<TestS>::new(P3::origin(), V3::x_axis());
+        let moved = t.forward * ray;
+        // translation shifts the origin but leaves a (normalized) direction along x
+        let diff = (moved.origin - P3::new(1.0, 2.0, 3.0)).norm();
+        assert!(diff < 1e-5, "ray origin {:?}", moved.origin);
+        assert!((moved.direction.norm() - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn transform_debug_and_eq() {
+        let t = T3::from_translation(V3::new(1.0, 0.0, 0.0));
+        let s = format!("{:?}", t);
+        assert!(s.contains("Transform3"));
+        assert_eq!(t, t.clone());
+        assert_ne!(t, T3::new());
+    }
+
+    #[test]
+    fn from_vector_stack_and_axis_transform() {
+        // an orthonormal frame (identity basis) -> identity-like transform
+        let tf = TangentFrame::<TestS>::new(V3::x_axis(), V3::y_axis(), V3::z_axis());
+        let t: T3 = tf.into(); // From<TangentFrame> -> from_vector_stack
+        let (ax, ay, az) = t.axis_transform();
+        assert!((ax - V3::x_axis()).norm() < 1e-5);
+        assert!((ay - V3::y_axis()).norm() < 1e-5);
+        assert!((az - V3::z_axis()).norm() < 1e-5);
+    }
+
+    #[test]
     fn test_transform() {
         let transform_translate = T3::from_translation(V3::new(1.0, 2.0, 0.0));
         let transform_rotate = T3::from_axis_angle(V3::z_axis(), PI / 4.0);

@@ -719,6 +719,193 @@ mod test {
         println!("d_mu is {}", d_mu);
     }
 
+    // --- ChartedMeasure::measure / differential_measure closed forms ---
+
+    #[test]
+    fn length_measure_is_span() {
+        assert_eq!(
+            <Length as ChartedMeasure<R>>::measure(Bounds1D::new(2.0, 5.0)),
+            3.0
+        );
+        assert_eq!(<Length as ChartedMeasure<R>>::differential_measure(0.5), 1.0);
+    }
+
+    #[test]
+    fn angle_measure_wraps_circle() {
+        assert!(
+            (<Angle as ChartedMeasure<Circle>>::measure(Bounds1D::new(0.0, PI)) - PI).abs() < 1e-5
+        );
+        assert_eq!(
+            <Angle as ChartedMeasure<Circle>>::differential_measure(1.0),
+            1.0
+        );
+    }
+
+    #[test]
+    fn disk_area_measure_and_jacobian() {
+        // (angle span PI) / 2 * (1² - 0²) = PI/2
+        let set = (Bounds1D::new(0.0, PI), Bounds1D::new(0.0, 1.0));
+        let m = <DiskAreaMeasure as ChartedMeasure<DiskSpace>>::measure(set);
+        assert!((m - PI / 2.0).abs() < 1e-5, "disk area measure {}", m);
+        // differential measure is the radius (the change-of-variables Jacobian)
+        assert_eq!(
+            <DiskAreaMeasure as ChartedMeasure<DiskSpace>>::differential_measure((0.3, 0.7)),
+            0.7
+        );
+    }
+
+    #[test]
+    fn product_area_measure_multiplies_factors() {
+        let set = (Bounds1D::new(0.0, 2.0), Bounds1D::new(0.0, 3.0));
+        let m = <Area as ChartedMeasure<ProductSet<R, R>>>::measure(set);
+        assert!((m - 6.0).abs() < 1e-5, "area {}", m);
+        assert_eq!(
+            <Area as ChartedMeasure<ProductSet<R, R>>>::differential_measure((0.5, 0.5)),
+            1.0
+        );
+    }
+
+    #[test]
+    fn solid_angle_spherical_full_sphere_is_4pi() {
+        let full = Bounds2D::new(Bounds1D::new(0.0, TAU), Bounds1D::new(0.0, PI));
+        let m = <SolidAngle as ChartedMeasure<SphericalCoordinates>>::measure(full);
+        assert!((m - 4.0 * PI).abs() < 1e-4, "full sphere solid angle {}", m);
+        assert!(
+            (<SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((
+                0.0,
+                FRAC_PI_2
+            )) - 1.0)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn solid_angle_sector_hemisphere_is_tau() {
+        // cone with half-angle π/2 is a hemisphere: TAU*(1 - cos(π/2)) = TAU.
+        let set = ([0.0, 0.0, 1.0], FRAC_PI_2);
+        let m = <SolidAngle as ChartedMeasure<DirectionalSector>>::measure(set);
+        assert!((m - TAU).abs() < 1e-5, "hemisphere sector {}", m);
+        assert_eq!(
+            <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure([0.0, 0.0, 1.0]),
+            1.0
+        );
+    }
+
+    #[test]
+    fn projected_solid_angle_both_phi_branches() {
+        // Branch A: phi bounds entirely below π/2.
+        let below = Bounds2D::new(Bounds1D::new(0.0, TAU), Bounds1D::new(0.0, FRAC_PI_2 * 0.5));
+        let a = <ProjectedSolidAngle as ChartedMeasure<SphericalCoordinates>>::measure(below);
+        assert!(a.is_finite() && a > 0.0, "below-branch measure {}", a);
+
+        // Branch B: phi bounds straddle π/2 (contains FRAC_PI_2).
+        let straddle = Bounds2D::new(Bounds1D::new(0.0, TAU), Bounds1D::new(0.0, PI));
+        let b = <ProjectedSolidAngle as ChartedMeasure<SphericalCoordinates>>::measure(straddle);
+        assert!(b.is_finite() && b > 0.0, "straddle-branch measure {}", b);
+
+        // differential: |cosφ|·sinφ
+        let phi = std::f32::consts::FRAC_PI_3;
+        let d = <ProjectedSolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure(
+            (0.0, phi),
+        );
+        let expect = phi.cos().abs() * phi.sin();
+        assert!((d - expect).abs() < 1e-6, "differential {} vs {}", d, expect);
+    }
+
+    // --- Vector<R> blanket helper-trait impls ---
+
+    type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+
+    #[test]
+    fn vector_abs() {
+        let v = Vector::<TestR>::new([-1.0, 2.0, -3.0, 4.0]);
+        assert_eq!(&Abs::abs(v).into_array()[..], &[1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn vector_check_nan_and_inf() {
+        let clean = Vector::<TestR>::new([1.0, 2.0, 3.0, 4.0]);
+        let some_nan = Vector::<TestR>::new([f32::NAN, 2.0, 3.0, 4.0]);
+        let all_nan = Vector::<TestR>::splat(f32::NAN);
+        assert_eq!(clean.check_nan(), CheckResult::None);
+        assert_eq!(some_nan.check_nan(), CheckResult::Some);
+        assert_eq!(all_nan.check_nan(), CheckResult::All);
+
+        let some_inf = Vector::<TestR>::new([f32::INFINITY, 2.0, 3.0, 4.0]);
+        let all_inf = Vector::<TestR>::splat(f32::INFINITY);
+        assert_eq!(clean.check_inf(), CheckResult::None);
+        assert_eq!(some_inf.check_inf(), CheckResult::Some);
+        assert_eq!(all_inf.check_inf(), CheckResult::All);
+    }
+
+    #[test]
+    fn vector_total_partial_ord() {
+        let a = Vector::<TestR>::splat(1.0);
+        let b = Vector::<TestR>::splat(2.0);
+        assert_eq!(TotalPartialOrd::partial_cmp(&a, &a), Some(Ordering::Equal));
+        assert_eq!(TotalPartialOrd::partial_cmp(&b, &a), Some(Ordering::Greater));
+        assert_eq!(TotalPartialOrd::partial_cmp(&a, &b), Some(Ordering::Less));
+        // incomparable: some lanes greater, some lesser
+        let c = Vector::<TestR>::new([1.0, 5.0, 1.0, 5.0]);
+        let d = Vector::<TestR>::new([5.0, 1.0, 5.0, 1.0]);
+        assert_eq!(TotalPartialOrd::partial_cmp(&c, &d), None);
+    }
+
+    #[test]
+    fn vector_from_scalar_and_field() {
+        let v = <Vector<TestR> as FromScalar<f32>>::from_scalar(5.0);
+        assert_eq!(&v.into_array()[..], &[5.0, 5.0, 5.0, 5.0]);
+
+        let a = Vector::<TestR>::new([1.0, 4.0, 1.0, 4.0]);
+        let b = Vector::<TestR>::new([3.0, 2.0, 3.0, 2.0]);
+        assert_eq!(&Field::min(&a, b).into_array()[..], &[1.0, 2.0, 1.0, 2.0]);
+        assert_eq!(&Field::max(&a, b).into_array()[..], &[3.0, 4.0, 3.0, 4.0]);
+        assert_eq!(&<Vector<TestR> as Field>::ZERO.into_array()[..], &[0.0; 4]);
+        assert_eq!(&<Vector<TestR> as Field>::ONE.into_array()[..], &[1.0; 4]);
+    }
+
+    #[test]
+    fn f32_field_and_checks() {
+        assert_eq!(Field::min(&2.0f32, 5.0), 2.0);
+        assert_eq!(Field::max(&2.0f32, 5.0), 5.0);
+        assert_eq!(<f32 as Field>::ZERO, 0.0);
+        assert_eq!(<f32 as Field>::ONE, 1.0);
+        assert_eq!(f32::NAN.check_nan(), CheckResult::All);
+        assert_eq!(1.0f32.check_nan(), CheckResult::None);
+        assert_eq!(f32::INFINITY.check_inf(), CheckResult::All);
+        assert_eq!(1.0f32.check_inf(), CheckResult::None);
+        assert_eq!(Abs::abs(-3.0f32), 3.0);
+    }
+
+    #[test]
+    fn f32_total_partial_ord() {
+        assert_eq!(TotalPartialOrd::partial_cmp(&1.0f32, &2.0), Some(Ordering::Less));
+        assert_eq!(TotalPartialOrd::partial_cmp(&2.0f32, &2.0), Some(Ordering::Equal));
+        assert_eq!(TotalPartialOrd::partial_cmp(&3.0f32, &2.0), Some(Ordering::Greater));
+        assert_eq!(TotalPartialOrd::partial_cmp(&f32::NAN, &2.0), None);
+    }
+
+    #[test]
+    fn phantom_domains_default_and_clone() {
+        use typenum::U3;
+        // exercise Default + Clone/Copy on the phantom path-domain markers
+        let a = AreaProductDomain::<U3>::default();
+        let _a2 = a.clone();
+        let _a3 = a; // Copy
+        let p = PathThroughputDomain::<U3>::default();
+        let _p2 = p.clone();
+        let _p3 = p; // Copy
+    }
+
+    #[test]
+    fn check_result_coerce() {
+        assert!(CheckResult::All.coerce(false));
+        assert!(!CheckResult::None.coerce(true));
+        assert!(CheckResult::Some.coerce(true));
+        assert!(!CheckResult::Some.coerce(false));
+    }
+
     // type DiskPDF = PDF<f32, DiskMeasure>;
     // type Sampled1D = (Sample1D, PDF<f32, Length>);
     // struct SampledDisk(pub Sample2D, pub DiskPDF);

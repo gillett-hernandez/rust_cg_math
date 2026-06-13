@@ -286,6 +286,16 @@ mod test {
     }
 
     #[test]
+    fn negation_negates_value_and_derivatives() {
+        // f = -(x*y) at (2,3): f=-6, and every partial flips sign.
+        let x = Dual::<2>::variable(2.0, 0);
+        let y = Dual::<2>::variable(3.0, 1);
+        let f = -(x * y);
+        assert_eq!(f.val, -6.0);
+        assert_eq!(f.eps, [-3.0, -2.0]);
+    }
+
+    #[test]
     fn product_rule() {
         // f = x*y at (x,y)=(2,3): f=6, ∂f/∂x=y=3, ∂f/∂y=x=2
         let x = Dual::<2>::variable(2.0, 0);
