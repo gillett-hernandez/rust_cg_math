@@ -199,6 +199,12 @@ mod tests {
             let mid_y = b.y.lerp(0.5);
             prop_assert!(b.contains((mid_x, mid_y)), "midpoint not contained");
         }
+        
+        #[test]
+        fn bounds2d_sample_is_contained_within(x in 0.0f32..1.0, y in 0.0f32..1.0, b in arb_bounds2d()) {
+            let pt = b.sample(x, y);
+            prop_assert!(b.contains((pt.0, pt.1)), "sampled point not contained");
+        }
 
         #[test]
         fn bounds2d_union_commutative(a in arb_bounds2d(), b in arb_bounds2d()) {
