@@ -130,6 +130,111 @@ pub fn direction_to_uv<S: thermite::simd::Simd>(direction: Vec3<S>) -> (f32, f32
     (u, v)
 }
 
+//----------------------------------------------------------------------
+// Signed distance to an axis-aligned ellipse.
+//
+// Port of Inigo Quilez's `sdEllipse` (the iterative variant), which refines a
+// foot-point on the ellipse with three fixed-point iterations and reports the
+// distance to it, negated when the query point is inside. See
+// https://iquilezles.org/articles/ellipsedist/ . The sign test compares
+// |p|² against |nearest|² rather than a true inside test, which matches the
+// reference and is exact away from the (degenerate) evolute cusps.
+
+const FRAC_1_SQRT_2: f32 = std::f32::consts::FRAC_1_SQRT_2;
+
+/// Scalar signed distance from point `p` to the axis-aligned ellipse with
+/// semi-axes `e = (a, b)`. Negative inside, positive outside.
+#[inline(always)]
+pub fn sd_ellipse(p: (f32, f32), e: (f32, f32)) -> f32 {
+    let (pax, pay) = (p.0.abs(), p.1.abs());
+    let (eix, eiy) = (1.0 / e.0, 1.0 / e.1);
+    let (e2x, e2y) = (e.0 * e.0, e.1 * e.1);
+    // ve = ei * (e2.x - e2.y, e2.y - e2.x)
+    let (vex, vey) = (eix * (e2x - e2y), eiy * (e2y - e2x));
+
+    let (mut tx, mut ty) = (FRAC_1_SQRT_2, FRAC_1_SQRT_2);
+    for _ in 0..3 {
+        // v = ve * t^3
+        let (vx, vy) = (vex * tx * tx * tx, vey * ty * ty * ty);
+        // u = normalize(pAbs - v) * length(t*e - v)
+        let (dx, dy) = (pax - vx, pay - vy);
+        let inv_d = 1.0 / (dx * dx + dy * dy).sqrt();
+        let (lx, ly) = (tx * e.0 - vx, ty * e.1 - vy);
+        let len_l = (lx * lx + ly * ly).sqrt();
+        let (ux, uy) = (dx * inv_d * len_l, dy * inv_d * len_l);
+        // w = ei * (v + u); t = normalize(clamp(w, 0, 1))
+        let (wx, wy) = (eix * (vx + ux), eiy * (vy + uy));
+        let (cx, cy) = (wx.clamp(0.0, 1.0), wy.clamp(0.0, 1.0));
+        let inv_c = 1.0 / (cx * cx + cy * cy).sqrt();
+        tx = cx * inv_c;
+        ty = cy * inv_c;
+    }
+
+    let (nax, nay) = (tx * e.0, ty * e.1);
+    let dist = ((pax - nax) * (pax - nax) + (pay - nay) * (pay - nay)).sqrt();
+    if pax * pax + pay * pay < nax * nax + nay * nay {
+        -dist
+    } else {
+        dist
+    }
+}
+
+/// Vector form of [`sd_ellipse`]: evaluates the signed distance for one query
+/// point per SIMD lane (`px`/`py` hold the per-lane x/y coordinates) against a
+/// single ellipse with semi-axes `e = (a, b)`. The ellipse-derived constants are
+/// scalar and splatted once; the per-point work (the three refinement
+/// iterations and the final sign select) runs across all lanes at once.
+#[inline(always)]
+pub fn sd_ellipse_v<V>(px: V, py: V, e: (f32, f32)) -> V
+where
+    V: FloatVectorWithBits<Element = f32>,
+{
+    let pax = px.abs();
+    let pay = py.abs();
+    let (eix, eiy) = (1.0 / e.0, 1.0 / e.1);
+    let (e2x, e2y) = (e.0 * e.0, e.1 * e.1);
+    let vex = V::splat(eix * (e2x - e2y));
+    let vey = V::splat(eiy * (e2y - e2x));
+    let (ex, ey) = (V::splat(e.0), V::splat(e.1));
+    let (eix_v, eiy_v) = (V::splat(eix), V::splat(eiy));
+    let zero = V::splat(0.0);
+    let one = V::splat(1.0);
+
+    let mut tx = V::splat(FRAC_1_SQRT_2);
+    let mut ty = V::splat(FRAC_1_SQRT_2);
+    for _ in 0..3 {
+        let vx = vex * tx * tx * tx;
+        let vy = vey * ty * ty * ty;
+        let dx = pax - vx;
+        let dy = pay - vy;
+        let inv_d = (dx * dx + dy * dy).sqrt().rcp();
+        let lx = tx * ex - vx;
+        let ly = ty * ey - vy;
+        let len_l = (lx * lx + ly * ly).sqrt();
+        let ux = dx * inv_d * len_l;
+        let uy = dy * inv_d * len_l;
+        let wx = eix_v * (vx + ux);
+        let wy = eiy_v * (vy + uy);
+        let cx = wx.clamp(zero, one);
+        let cy = wy.clamp(zero, one);
+        let inv_c = (cx * cx + cy * cy).sqrt().rcp();
+        tx = cx * inv_c;
+        ty = cy * inv_c;
+    }
+
+    let nax = tx * ex;
+    let nay = ty * ey;
+    let ddx = pax - nax;
+    let ddy = pay - nay;
+    let dist = (ddx * ddx + ddy * ddy).sqrt();
+    // negate where the point is "inside" (|p|² < |nearest|²), matching the scalar form.
+    let inside = (pax * pax + pay * pay).cmp_lt(nax * nax + nay * nay);
+    inside.select(-dist, dist)
+}
+
+
+
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -211,6 +316,51 @@ mod test {
 
     type TestS = thermite::backend::scalar::Scalar;
     type V3 = Vec3<TestS>;
+    type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+
+    proptest! {
+        // A point on the ellipse boundary has (near) zero signed distance.
+        #[test]
+        fn sd_ellipse_zero_on_boundary(
+            t in 0.0f32..std::f32::consts::TAU,
+            a in 0.5f32..5.0,
+            b in 0.5f32..5.0,
+        ) {
+            let (s, c) = t.sin_cos();
+            let p = (a * c, b * s);
+            let d = sd_ellipse(p, (a, b));
+            prop_assert!(d.abs() < 1e-2, "boundary dist {} for t={}, e=({},{})", d, t, a, b);
+        }
+
+        // Inside points are negative, outside points are positive (use the unit
+        // circle, where the signed distance has a closed form: |p| - 1).
+        #[test]
+        fn sd_ellipse_sign_on_circle(x in -3.0f32..3.0, y in -3.0f32..3.0) {
+            let r = x.hypot(y);
+            prop_assume!((r - 1.0).abs() > 1e-2); // skip points right on the boundary
+            let d = sd_ellipse((x, y), (1.0, 1.0));
+            prop_assert_eq!(d < 0.0, r < 1.0, "sign mismatch: |p|={}, d={}", r, d);
+            // for a circle the exact distance is |p| - 1
+            prop_assert!((d - (r - 1.0)).abs() < 1e-3, "circle dist {} vs {}", d, r - 1.0);
+        }
+
+        // The vectorized form must agree with the scalar form lane-by-lane.
+        #[test]
+        fn sd_ellipse_v_matches_scalar(
+            x in -4.0f32..4.0, y in -4.0f32..4.0,
+            a in 0.5f32..5.0, b in 0.5f32..5.0,
+        ) {
+            let v = sd_ellipse_v::<Vector<TestR>>(
+                Vector::<TestR>::splat(x),
+                Vector::<TestR>::splat(y),
+                (a, b),
+            );
+            let s = sd_ellipse((x, y), (a, b));
+            for lane in v.into_array() {
+                prop_assert!((lane - s).abs() < 1e-4, "lane {} vs scalar {}", lane, s);
+            }
+        }
+    }
 
     #[test]
     fn test_direction_to_uv() {

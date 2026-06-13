@@ -100,6 +100,30 @@ where
         bn.iter(|| random_in_unit_sphere::<S>(black_box(s3)))
     });
 
+    // --- Concentration-controllable lobe samplers (AD auto-pdf) ---
+    // Each is benched twice: the value-only `f32` warp (hot path, no
+    // derivatives) and the `_pdf` variant that runs the same warp through the
+    // dual-number `SampleField` core, so the AD overhead of producing the
+    // solid-angle pdf is directly visible side by side.
+    let n_phong = 8.0_f32;
+    let alpha_ggx = 0.3_f32;
+    group.bench_function("power_cosine_direction", |bn| {
+        bn.iter(|| power_cosine_direction::<S>(black_box(s2), black_box(n_phong)))
+    });
+    group.bench_function("power_cosine_direction_pdf", |bn| {
+        bn.iter(|| power_cosine_direction_pdf::<S>(black_box(s2), black_box(n_phong)))
+    });
+    group.bench_function("ggx_direction", |bn| {
+        bn.iter(|| ggx_direction::<S>(black_box(s2), black_box(alpha_ggx)))
+    });
+    group.bench_function("ggx_direction_pdf", |bn| {
+        bn.iter(|| ggx_direction_pdf::<S>(black_box(s2), black_box(alpha_ggx)))
+    });
+    // Baseline AD overhead reference: the cosine warp value vs. auto-pdf paths.
+    group.bench_function("random_cosine_direction_pdf", |bn| {
+        bn.iter(|| random_cosine_direction_pdf::<S>(black_box(s2)))
+    });
+
     // --- SIMD curve evaluation (one native-width register of wavelengths) ---
     // The transcendental-heavy variants (Exponential / Blackbody) best show the
     // benefit of wider lanes; Polynomial / Cauchy are pure arithmetic.
@@ -122,6 +146,22 @@ where
     });
     group.bench_function("curve_simd_cauchy", |bn| {
         bn.iter(|| black_box(&cauchy).evaluate_power(black_box(lambda)))
+    });
+
+    // --- Ellipse SDF ---
+    // The scalar `sd_ellipse` is backend-agnostic (runs identically in every
+    // group) and serves as the per-lane baseline for the vectorized form, which
+    // evaluates one query point per lane against the same ellipse — so the
+    // speedup over the scalar baseline grows with the backend's lane width.
+    let ellipse = (2.0_f32, 1.0_f32);
+    let pt = (1.3_f32, 0.6_f32);
+    let px = Vector::<S::f32x4>::splat(pt.0);
+    let py = Vector::<S::f32x4>::splat(pt.1);
+    group.bench_function("sd_ellipse", |bn| {
+        bn.iter(|| sd_ellipse(black_box(pt), black_box(ellipse)))
+    });
+    group.bench_function("sd_ellipse_v", |bn| {
+        bn.iter(|| sd_ellipse_v(black_box(px), black_box(py), black_box(ellipse)))
     });
 
     group.finish();

@@ -160,6 +160,18 @@ mod tests {
             prop_assert!(isect.upper <= a.upper.max(b.upper));
         }
 
+         #[test]
+        fn intersection_bounds2d(a in arb_bounds2d(), b in arb_bounds2d()) {
+            let isect = a.intersection(b);
+            // intersection lower >= max(a.lower, b.lower)
+            // intersection upper <= min(a.upper, b.upper)
+            prop_assert!(isect.x.lower >= a.x.lower.min(b.x.lower));
+            prop_assert!(isect.x.upper <= a.x.upper.max(b.x.upper));
+
+            prop_assert!(isect.y.lower >= a.y.lower.min(b.y.lower));
+            prop_assert!(isect.y.upper <= a.y.upper.max(b.y.upper));
+        }
+
         #[test]
         fn sample_equals_lerp(b in arb_bounds1d(), t in 0.0f32..1.0) {
             let sampled = b.sample(t);

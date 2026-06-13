@@ -1,5 +1,4 @@
 use crate::prelude::*;
-use thermite::register::LinAlg3Register;
 use thermite::simd::Simd;
 
 #[inline(always)]
@@ -70,6 +69,35 @@ fn to_sphere_core<F: SampleField>(r1: F, r2: F, k: f32) -> [F; 3] {
     let (s, c) = phi.sin_cos();
     let sqrt_1_z2 = (F::constant(1.0) - z * z).sqrt();
     [c * sqrt_1_z2, s * sqrt_1_z2, z]
+}
+
+/// Power-cosine (Phong) lobe around +z, concentration exponent `n ≥ 0`.
+/// `cosθ = u₁^{1/(n+1)}`, `φ = 2π·u₂`. pdf = (n+1)/(2π)·cosⁿθ wrt solid angle.
+/// `n=0` → uniform hemisphere; `n=1` → the cosine lobe; `n→∞` → tight around +z.
+/// Built in spherical form so the result is unit-length by construction (no
+/// `.normalized()`), unlike the deprecated [`weighted_cosine_direction`].
+#[inline(always)]
+fn power_cosine_core<F: SampleField>(u1: F, u2: F, n: f32) -> [F; 3] {
+    let cos_t = u1.powf(1.0 / (n + 1.0));
+    let sin_t = (F::constant(1.0) - cos_t * cos_t).sqrt();
+    let phi = u2 * F::constant(2.0 * PI);
+    let (s, c) = phi.sin_cos();
+    [c * sin_t, s * sin_t, cos_t]
+}
+
+/// GGX / Trowbridge-Reitz microfacet lobe (micronormal) around +z, roughness
+/// `α ∈ (0,1]`. `cosθ = √((1−u₁)/(1+(α²−1)·u₁))`, `φ = 2π·u₂` (Walter et al.
+/// 2007 NDF importance sampling). pdf = D(θ)·cosθ wrt solid angle, with
+/// `D = α²/(π·((α²−1)cos²θ+1)²)`. Small `α` → tight (mirror-like); large `α` →
+/// broad. Built in spherical form so the result is unit-length by construction.
+#[inline(always)]
+fn ggx_core<F: SampleField>(u1: F, u2: F, alpha: f32) -> [F; 3] {
+    let a2m1 = F::constant(alpha * alpha - 1.0);
+    let cos_t = ((F::constant(1.0) - u1) / (F::constant(1.0) + a2m1 * u1)).sqrt();
+    let sin_t = (F::constant(1.0) - cos_t * cos_t).sqrt();
+    let phi = u2 * F::constant(2.0 * PI);
+    let (s, c) = phi.sin_cos();
+    [c * sin_t, s * sin_t, cos_t]
 }
 
 #[inline(always)]
@@ -162,18 +190,48 @@ pub fn random_cosine_direction_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, S
     (v, PDF::new(p))
 }
 
+/// Power-cosine (Phong) lobe direction around +z, concentration exponent `n`.
+/// Orient to an arbitrary central direction with
+/// `TangentFrame::from_normal(d).to_world(..)`.
 #[inline(always)]
-pub fn weighted_cosine_direction<S: Simd>(r: Sample2D, weight: f32) -> Vec3<S>
-where
-    S::f32x4: LinAlg3Register,
-{
-    let Sample2D { x: u, y: v } = r;
-    let z: f32 = weight * (1.0 - v).sqrt();
-    let phi: f32 = 2.0 * PI * u;
-    let (mut y, mut x) = phi.sin_cos();
-    x *= v.sqrt();
-    y *= v.sqrt();
-    Vec3::new(x, y, z).normalized()
+pub fn power_cosine_direction<S: Simd>(r: Sample2D, n: f32) -> Vec3<S> {
+    vec3_of(power_cosine_core::<f32>(r.x, r.y, n).map(SampleField::value))
+}
+
+/// As [`power_cosine_direction`], but also returns the solid-angle pdf
+/// (`(n+1)/(2π)·cosⁿθ`) computed automatically from the warp Jacobian.
+#[inline(always)]
+pub fn power_cosine_direction_pdf<S: Simd>(r: Sample2D, n: f32) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    let (v, p) = warp_with_pdf::<S>(|a, b| power_cosine_core(a, b, n), r);
+    (v, PDF::new(p))
+}
+
+/// GGX / Trowbridge-Reitz microfacet lobe direction around +z, roughness `alpha`.
+/// Orient to an arbitrary central direction with
+/// `TangentFrame::from_normal(d).to_world(..)`.
+#[inline(always)]
+pub fn ggx_direction<S: Simd>(r: Sample2D, alpha: f32) -> Vec3<S> {
+    vec3_of(ggx_core::<f32>(r.x, r.y, alpha).map(SampleField::value))
+}
+
+/// As [`ggx_direction`], but also returns the solid-angle pdf (`D(θ)·cosθ`)
+/// computed automatically from the warp Jacobian.
+#[inline(always)]
+pub fn ggx_direction_pdf<S: Simd>(r: Sample2D, alpha: f32) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    let (v, p) = warp_with_pdf::<S>(|a, b| ggx_core(a, b, alpha), r);
+    (v, PDF::new(p))
+}
+
+#[deprecated(
+    note = "Ad-hoc normalize-based lobe with no closed-form pdf and not \
+            AD-compatible. Redirects to `power_cosine_direction` with n = \
+            weight²; use that (or `_pdf` for the automatic solid-angle pdf). \
+            NOTE: this CHANGES the produced distribution to a true cosⁿ lobe — \
+            exact only at weight = 1 (n = 1, the cosine lobe)."
+)]
+#[inline(always)]
+pub fn weighted_cosine_direction<S: Simd>(r: Sample2D, weight: f32) -> Vec3<S> {
+    power_cosine_direction::<S>(r, weight * weight)
 }
 
 #[inline(always)]
@@ -249,6 +307,7 @@ mod tests {
         }
 
         #[test]
+        #[allow(deprecated)]
         fn weighted_cosine_direction_unit(s in arb_sample2d(), w in 0.1f32..2.0) {
             let v: V3 = weighted_cosine_direction(s, w);
             let n = v.norm();
@@ -326,6 +385,65 @@ mod tests {
             prop_assert!((*p - expected).abs() < 1e-3, "p={}, expected={}", *p, expected);
             let v2: V3 = random_to_sphere(s, radius, dist_sq);
             prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        // ---- concentration-controllable lobe samplers --------------------
+
+        #[test]
+        fn power_cosine_pdf_matches_closed_form(
+            s in arb_sample2d(), n in 0.0f32..64.0,
+        ) {
+            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_pdf(s, n);
+            // pdf = (n+1)/(2π) · cosⁿθ  (cosθ = z, the lobe is around +z)
+            let z = v.z();
+            let expected = (n + 1.0) / (2.0 * PI) * z.powf(n);
+            // relative tolerance: zⁿ varies over a wide dynamic range
+            prop_assert!(
+                (*p - expected).abs() <= 1e-3 + 1e-2 * expected,
+                "p={}, expected={}, n={}", *p, expected, n
+            );
+            prop_assert!(z >= 0.0, "lobe should be in the upper hemisphere, z={}", z);
+            // unit-length by construction — no .normalized() anywhere
+            prop_assert!((v.norm() - 1.0).abs() < 1e-5, "||v||={}", v.norm());
+            let v2: V3 = power_cosine_direction(s, n);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        #[test]
+        fn power_cosine_n1_reduces_to_cosine_density(s in arb_sample2d()) {
+            // n=1 is the cosine lobe: pdf = cosθ/π at the produced direction.
+            // (The per-sample bijection differs from random_cosine_direction —
+            // the two uniform dims play swapped roles — so this checks the
+            // density form, not sample equality.)
+            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_pdf(s, 1.0);
+            prop_assert!((*p - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", *p, v.z() / PI);
+        }
+
+        #[test]
+        fn ggx_pdf_matches_closed_form(
+            s in arb_sample2d(), alpha in 0.05f32..1.0,
+        ) {
+            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_pdf(s, alpha);
+            // pdf = D(θ)·cosθ, D = α²/(π((α²-1)cos²θ+1)²)
+            let cos_t = v.z();
+            let a2 = alpha * alpha;
+            let denom = (a2 - 1.0) * cos_t * cos_t + 1.0;
+            let d = a2 / (PI * denom * denom);
+            let expected = d * cos_t;
+            prop_assert!(
+                (*p - expected).abs() <= 1e-3 + 1e-2 * expected,
+                "p={}, expected={}, alpha={}", *p, expected, alpha
+            );
+            prop_assert!((v.norm() - 1.0).abs() < 1e-5, "||v||={}", v.norm());
+            let v2: V3 = ggx_direction(s, alpha);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
+        #[test]
+        fn ggx_alpha1_reduces_to_cosine_density(s in arb_sample2d()) {
+            // at α=1, D=1/π so pdf = cosθ/π at the produced direction.
+            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_pdf(s, 1.0);
+            prop_assert!((*p - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", *p, v.z() / PI);
         }
     }
 }
