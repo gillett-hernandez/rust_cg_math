@@ -515,7 +515,7 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "math"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "criterion",
  "deepsize",
@@ -957,8 +957,8 @@ dependencies = [
 
 [[package]]
 name = "thermite"
-version = "0.1.0"
-source = "git+https://github.com/raygon-renderer/thermite#912dca840d96dbff75f3f9e7c2799c20f6153992"
+version = "0.2.0-beta.0"
+source = "git+https://github.com/raygon-renderer/thermite#c297100b2a5d25141abe76bcaf63e0873252325a"
 dependencies = [
  "bitvec",
  "cfg-if",
@@ -979,8 +979,8 @@ dependencies = [
 
 [[package]]
 name = "thermite-dispatch"
-version = "0.1.0"
-source = "git+https://github.com/raygon-renderer/thermite#912dca840d96dbff75f3f9e7c2799c20f6153992"
+version = "0.2.0-beta.0"
+source = "git+https://github.com/raygon-renderer/thermite#c297100b2a5d25141abe76bcaf63e0873252325a"
 dependencies = [
  "cfg-if",
  "proc-macro2",
@@ -990,8 +990,8 @@ dependencies = [
 
 [[package]]
 name = "thermite-macros"
-version = "0.1.0"
-source = "git+https://github.com/raygon-renderer/thermite#912dca840d96dbff75f3f9e7c2799c20f6153992"
+version = "0.2.0-beta.0"
+source = "git+https://github.com/raygon-renderer/thermite#c297100b2a5d25141abe76bcaf63e0873252325a"
 dependencies = [
  "proc-macro2",
  "quote",
