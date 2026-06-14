@@ -9,6 +9,8 @@
 //! The x86 backends invoke target-feature-gated intrinsics, so build for a CPU
 //! that actually has them, e.g. `RUSTFLAGS="-C target-cpu=native" cargo bench`.
 
+use std::f32::consts::PI;
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 use math::curves::Op;
@@ -19,6 +21,35 @@ use thermite::backend::x86_v3::X86V3;
 use thermite::math::TranscendentalMath;
 use thermite::register::{FloatRegister, LinAlg3Register, LinAlg4Register};
 use thermite::simd::Simd;
+
+// Hand-written closed-form solid-angle pdfs — the "traditional" baseline the
+// dual-number auto-pdf is meant to replace. Each takes the produced direction's
+// `cosθ` (= its `z`, since every lobe here is built around +z) and returns the
+// same density the matching `*_pdf` warp computes from the Jacobian. These are
+// exactly the bespoke, easy-to-desync-from-the-sampler formulas the AD path
+// removes the need to write by hand.
+
+/// Cosine-weighted hemisphere: pdf = cosθ/π wrt solid angle.
+#[inline(always)]
+fn cosine_pdf_analytic(cos_theta: f32) -> f32 {
+    cos_theta / PI
+}
+
+/// Power-cosine (Phong) lobe, exponent `n`: pdf = (n+1)/(2π)·cosⁿθ.
+#[inline(always)]
+fn power_cosine_pdf_analytic(cos_theta: f32, n: f32) -> f32 {
+    (n + 1.0) / (2.0 * PI) * cos_theta.powf(n)
+}
+
+/// GGX micronormal, roughness `α`: pdf = D(θ)·cosθ with
+/// D = α²/(π·((α²−1)cos²θ+1)²).
+#[inline(always)]
+fn ggx_pdf_analytic(cos_theta: f32, alpha: f32) -> f32 {
+    let a2 = alpha * alpha;
+    let denom = (a2 - 1.0) * cos_theta * cos_theta + 1.0;
+    let d = a2 / (PI * denom * denom);
+    d * cos_theta
+}
 
 /// Geometry + SIMD-curve benchmarks, generic over the thermite backend `S`.
 /// All ops for one backend land in a single criterion group named `backend`.
@@ -122,6 +153,59 @@ where
     // Baseline AD overhead reference: the cosine warp value vs. auto-pdf paths.
     group.bench_function("random_cosine_direction_pdf", |bn| {
         bn.iter(|| random_cosine_direction_pdf::<S>(black_box(s2)))
+    });
+
+    // --- AD auto-pdf vs. hand-written analytic pdf -------------------------
+    // The question these answer: is producing the pdf via forward-mode AD
+    // (dual numbers) cheaper or dearer than the traditional two-step path of
+    // drawing the sample with the value-only warp and then evaluating a
+    // bespoke closed-form pdf at that sample? Both branches of each pair
+    // return the same `(Vec3<S>, f32 pdf)`, so the comparison is apples to
+    // apples — the only difference is how the pdf is obtained.
+
+    // cosine-weighted hemisphere — pdf = cosθ/π
+    group.bench_function("cosine_pdf_dual", |bn| {
+        bn.iter(|| {
+            let (v, p) = random_cosine_direction_pdf::<S>(black_box(s2));
+            (v, *p)
+        })
+    });
+    group.bench_function("cosine_pdf_analytic", |bn| {
+        bn.iter(|| {
+            let v = random_cosine_direction::<S>(black_box(s2));
+            let p = cosine_pdf_analytic(v.z());
+            (v, p)
+        })
+    });
+
+    // power-cosine (Phong) lobe — pdf = (n+1)/(2π)·cosⁿθ
+    group.bench_function("power_cosine_pdf_dual", |bn| {
+        bn.iter(|| {
+            let (v, p) = power_cosine_direction_pdf::<S>(black_box(s2), black_box(n_phong));
+            (v, *p)
+        })
+    });
+    group.bench_function("power_cosine_pdf_analytic", |bn| {
+        bn.iter(|| {
+            let v = power_cosine_direction::<S>(black_box(s2), black_box(n_phong));
+            let p = power_cosine_pdf_analytic(v.z(), black_box(n_phong));
+            (v, p)
+        })
+    });
+
+    // GGX micronormal — pdf = D(θ)·cosθ
+    group.bench_function("ggx_pdf_dual", |bn| {
+        bn.iter(|| {
+            let (v, p) = ggx_direction_pdf::<S>(black_box(s2), black_box(alpha_ggx));
+            (v, *p)
+        })
+    });
+    group.bench_function("ggx_pdf_analytic", |bn| {
+        bn.iter(|| {
+            let v = ggx_direction::<S>(black_box(s2), black_box(alpha_ggx));
+            let p = ggx_pdf_analytic(v.z(), black_box(alpha_ggx));
+            (v, p)
+        })
     });
 
     // --- SIMD curve evaluation (one native-width register of wavelengths) ---

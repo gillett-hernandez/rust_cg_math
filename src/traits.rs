@@ -624,30 +624,8 @@ impl<R: thermite::register::FloatRegister> Field for Vector<R> {
 
 #[cfg(test)]
 mod test {
-    use num_traits::FromPrimitive;
 
     use super::*;
-
-    #[test]
-    fn length_measure() {
-        let m = Length::default();
-        // let s = <<Length as Measure>::Space as SpaceParameterization>::SimpleSet::default();
-    }
-
-    #[test]
-    fn area_measure() {
-        let m = Area::default();
-    }
-
-    #[test]
-    fn volume_measure() {
-        let m = Volume::default();
-    }
-
-    #[test]
-    fn diskarea_measure() {
-        let m = DiskAreaMeasure;
-    }
 
     #[test]
     fn area_product_extends_rank() {
