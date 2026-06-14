@@ -72,99 +72,30 @@ where
     pub fn transpose(&self) -> Matrix4x4<S> {
         Matrix4x4(<Vector<S::f32x4> as LinAlg4Vector>::mat4_transpose(&self.0))
     }
-}
 
-impl<S: Simd> Matrix4x4<S> {
-    /// General 4x4 inverse via the cofactor / adjugate closed form. Returns
-    /// `None` if the matrix is singular (`|det| < f32::EPSILON`). Runs at
-    /// construction time (once per transform), so a scalar formulation is fine.
+    /// General 4x4 inverse via thermite's `LinAlg4Vector::mat4_inverse_inplace`
+    /// (the vectorized GLM shuffle form). Returns `None` if the matrix is
+    /// singular (`|det| < f32::EPSILON`). Runs at construction time (once per
+    /// transform).
     ///
-    /// This stays scalar deliberately. A SIMD reformulation was profiled and
-    /// lost: Lengyel's cross/dot block form regressed (the per-column dot
-    /// products are horizontal reductions, plus scalar `extract`/insert
-    /// round-trips to read the bottom row and rebuild the 4th column), and the
-    /// shuffle-based GLM form is unreachable in fast form — thermite's only
-    /// backend-portable shuffle (`swizzle!`/`SwizzleRegister`) lowers to a
-    /// `permutevar`+`blend` sequence on x86 rather than an immediate `vshufps`,
-    /// and the immediate `ShuffleRegister` path isn't implemented for the
-    /// scalar (`ArrayRegister`) test backend. For one lone 4x4 the cross-lane
-    /// data movement costs more than straight-line scalar FMAs save, so the
-    /// compiler-optimized scalar version below is the fastest portable option.
+    /// This previously used a hand-rolled scalar cofactor/adjugate routine
+    /// because thermite's shuffle-based inverse wasn't reachable in fast form
+    /// (no immediate `ShuffleRegister` path on the scalar backend, and the
+    /// portable `swizzle!` lowered to `permutevar`+`blend` on x86). Thermite's
+    /// LinAlg rework added that primitive across all backends, so we defer to
+    /// it. `mat4_inverse_inplace` hands back the determinant; we keep our own
+    /// epsilon tolerance here rather than thermite's exact-zero test (its
+    /// `mat4_inverse` only rejects an exactly-zero determinant and returns a
+    /// finite-but-unreliable result for ill-conditioned matrices).
     /// See `benches/math_benches.rs::mat4_try_inverse`.
     #[inline(always)]
     pub fn try_inverse(&self) -> Option<Matrix4x4<S>> {
-        // Row-major flat view: `m[row * 4 + col]`. (as_array() is column-major,
-        // so transpose the indexing here.) Cofactor formula is written against
-        // row-major below for readability, then re-emitted column-major.
-        let a = self.as_array(); // column-major: a[col*4 + row]
-        let m = |row: usize, col: usize| a[col * 4 + row];
-
-        let m00 = m(0, 0);
-        let m01 = m(0, 1);
-        let m02 = m(0, 2);
-        let m03 = m(0, 3);
-        let m10 = m(1, 0);
-        let m11 = m(1, 1);
-        let m12 = m(1, 2);
-        let m13 = m(1, 3);
-        let m20 = m(2, 0);
-        let m21 = m(2, 1);
-        let m22 = m(2, 2);
-        let m23 = m(2, 3);
-        let m30 = m(3, 0);
-        let m31 = m(3, 1);
-        let m32 = m(3, 2);
-        let m33 = m(3, 3);
-
-        // 2x2 sub-determinants of the bottom two rows (s) and top two rows (c).
-        let s0 = m00 * m11 - m10 * m01;
-        let s1 = m00 * m12 - m10 * m02;
-        let s2 = m00 * m13 - m10 * m03;
-        let s3 = m01 * m12 - m11 * m02;
-        let s4 = m01 * m13 - m11 * m03;
-        let s5 = m02 * m13 - m12 * m03;
-
-        let c5 = m22 * m33 - m32 * m23;
-        let c4 = m21 * m33 - m31 * m23;
-        let c3 = m21 * m32 - m31 * m22;
-        let c2 = m20 * m33 - m30 * m23;
-        let c1 = m20 * m32 - m30 * m22;
-        let c0 = m20 * m31 - m30 * m21;
-
-        let det = s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0;
+        let mut m = self.0;
+        let det = <Vector<S::f32x4> as LinAlg4Vector>::mat4_inverse_inplace(&mut m);
         if det.abs() < f32::EPSILON {
             return None;
         }
-        let inv_det = 1.0 / det;
-
-        // Inverse entries in row-major `r[row][col]`.
-        let r00 = (m11 * c5 - m12 * c4 + m13 * c3) * inv_det;
-        let r01 = (-m01 * c5 + m02 * c4 - m03 * c3) * inv_det;
-        let r02 = (m31 * s5 - m32 * s4 + m33 * s3) * inv_det;
-        let r03 = (-m21 * s5 + m22 * s4 - m23 * s3) * inv_det;
-
-        let r10 = (-m10 * c5 + m12 * c2 - m13 * c1) * inv_det;
-        let r11 = (m00 * c5 - m02 * c2 + m03 * c1) * inv_det;
-        let r12 = (-m30 * s5 + m32 * s2 - m33 * s1) * inv_det;
-        let r13 = (m20 * s5 - m22 * s2 + m23 * s1) * inv_det;
-
-        let r20 = (m10 * c4 - m11 * c2 + m13 * c0) * inv_det;
-        let r21 = (-m00 * c4 + m01 * c2 - m03 * c0) * inv_det;
-        let r22 = (m30 * s4 - m31 * s2 + m33 * s0) * inv_det;
-        let r23 = (-m20 * s4 + m21 * s2 - m23 * s0) * inv_det;
-
-        let r30 = (-m10 * c3 + m11 * c1 - m12 * c0) * inv_det;
-        let r31 = (m00 * c3 - m01 * c1 + m02 * c0) * inv_det;
-        let r32 = (-m30 * s3 + m31 * s1 - m32 * s0) * inv_det;
-        let r33 = (m20 * s3 - m21 * s1 + m22 * s0) * inv_det;
-
-        // Re-emit column-major: each column is one f32x4.
-        Some(Matrix4x4([
-            Vector::<S::f32x4>::new([r00, r10, r20, r30]),
-            Vector::<S::f32x4>::new([r01, r11, r21, r31]),
-            Vector::<S::f32x4>::new([r02, r12, r22, r32]),
-            Vector::<S::f32x4>::new([r03, r13, r23, r33]),
-        ]))
+        Some(Matrix4x4(m))
     }
 }
 
@@ -598,6 +529,129 @@ mod tests {
         vals[10] = 1.0;
         // leave the 4th column all-zero -> det 0
         assert!(M4::from_array(vals).try_inverse().is_none());
+    }
+
+    /// Exploratory analysis (run with `--nocapture`) of how accurate the
+    /// inverse stays as the determinant collapses toward zero, to sanity-check
+    /// the `|det| < f32::EPSILON` cutoff in `try_inverse`.
+    ///
+    /// We build a near-singular family `M(delta)` whose 4th row is a fixed
+    /// linear combination of the first three rows plus `delta` times an
+    /// independent direction. As `delta -> 0` the rows become linearly
+    /// dependent: `det(M) ~ delta` and the condition number grows like
+    /// `1/delta`, so the inverse loses ~`log10(1/delta)` decimal digits. We
+    /// measure that loss directly as the reconstruction error
+    /// `max|M * M^-1 - I|`.
+    ///
+    /// Findings (scalar backend, see the printed table):
+    /// - Reconstruction error scales like `~1e-5 / |det|` — roughly two orders
+    ///   of magnitude *worse* than the naive `eps_f32 / |det|` (~1.2e-7/|det|)
+    ///   you'd predict from a single rounding, because the cofactor expansion
+    ///   chains ~16 FMAs plus the `1/det` division before any cancellation.
+    /// - Consequently the inverse is already numerically worthless well above
+    ///   f32::EPSILON: at `|det| ~= 7e-5` the error is ~6e-2, and by
+    ///   `|det| ~= 7e-6` it is O(1), yet `try_inverse` still returns `Some`.
+    /// - In this family `|det|` never actually lands inside `(0, EPSILON)`: it
+    ///   drops from ~7.6e-6 straight to an exact `0.0` once the cofactor sum
+    ///   cancels completely. So the `|det| < f32::EPSILON` gate here only ever
+    ///   rejects *exactly* singular matrices — it is doing nothing to screen out
+    ///   the merely ill-conditioned ones above it.
+    /// - Conclusion: a *fixed* determinant tolerance can't separate "good" from
+    ///   "garbage", because accuracy depends on `eps/|det|` (the condition
+    ///   number), not on `|det|` alone — and the safe `|det|` threshold would
+    ///   depend on the matrix's scale anyway. Raising the cutoff to, say, 1e-4
+    ///   would reject the worthless inverses in this family but is arbitrary and
+    ///   scale-dependent. If callers need a trustworthiness guarantee, gate on
+    ///   the reconstruction error (or a condition estimate), not a larger
+    ///   `|det|`. f32::EPSILON stays a reasonable "is it (near) exactly
+    ///   singular" guard, which is all `try_inverse` promises.
+    #[test]
+    fn matrix_try_inverse_tolerance_analysis() {
+        // Build a matrix from row-major rows (from_array expects column-major).
+        fn from_rows(rows: [[f32; 4]; 4]) -> M4 {
+            let mut cols = [0.0f32; 16];
+            for r in 0..4 {
+                for c in 0..4 {
+                    cols[c * 4 + r] = rows[r][c];
+                }
+            }
+            M4::from_array(cols)
+        }
+
+        // Three fixed independent rows, plus a 4th that is their sum (-> exactly
+        // singular) perturbed by `delta` along an independent direction.
+        let r0 = [2.0f32, 1.0, 1.0, 1.0];
+        let r1 = [1.0f32, 3.0, 1.0, 1.0];
+        let r2 = [1.0f32, 1.0, 4.0, 1.0];
+        let indep = [1.0f32, 1.0, 1.0, 5.0];
+
+        // max |M * M^-1 - I| over all 16 entries.
+        fn reconstruction_error(m: M4, inv: M4) -> f32 {
+            let prod = (m * inv).as_array();
+            let id = M4::identity().as_array();
+            prod.iter()
+                .zip(id.iter())
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max)
+        }
+
+        println!(
+            "\n   delta        |det|         recon_err     eps/|det|    result"
+        );
+        println!(
+            "  ------------------------------------------------------------------"
+        );
+        for k in 0..11 {
+            let delta = 10.0f32.powi(-k);
+            let r3 = std::array::from_fn(|i| r0[i] + r1[i] + r2[i] + delta * indep[i]);
+            let m = from_rows([r0, r1, r2, r3]);
+
+            // The determinant thermite computed (mat4_det shares the inverse
+            // path's cofactor form) for the table.
+            let det_val = <Vector<<TestS as Simd>::f32x4> as LinAlg4Vector>::mat4_det(&m.0);
+
+            match m.try_inverse() {
+                Some(inv) => {
+                    let err = reconstruction_error(m, inv);
+                    println!(
+                        "  {:>9.1e}   {:>11.4e}   {:>11.4e}   {:>9.2e}   Some(err={:.2e})",
+                        delta,
+                        det_val.abs(),
+                        err,
+                        f32::EPSILON / det_val.abs(),
+                        err
+                    );
+                }
+                None => {
+                    println!(
+                        "  {:>9.1e}   {:>11.4e}   {:>11}   {:>9.2e}   None (rejected)",
+                        delta,
+                        det_val.abs(),
+                        "-",
+                        f32::EPSILON / det_val.abs().max(f32::MIN_POSITIVE)
+                    );
+                }
+            }
+        }
+
+        // Sanity guards that lock in the qualitative findings above:
+        // 1. A comfortably-conditioned member inverts accurately.
+        let delta = 1.0f32;
+        let r3 = std::array::from_fn(|i| r0[i] + r1[i] + r2[i] + delta * indep[i]);
+        let m = from_rows([r0, r1, r2, r3]);
+        let inv = m.try_inverse().expect("delta=1 is well-conditioned");
+        assert!(
+            reconstruction_error(m, inv) < 1e-4,
+            "well-conditioned reconstruction should be tight"
+        );
+
+        // 2. The exactly-singular limit (delta = 0) is rejected.
+        let r3 = std::array::from_fn(|i| r0[i] + r1[i] + r2[i]);
+        let m = from_rows([r0, r1, r2, r3]);
+        assert!(
+            m.try_inverse().is_none(),
+            "exactly-singular matrix must be rejected"
+        );
     }
 
     #[test]
