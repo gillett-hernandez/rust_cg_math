@@ -21,7 +21,7 @@ thermite = { git = "https://github.com/raygon-renderer/thermite" }
 
 [dev-dependencies]
 proptest = "1.10.0"
-criterion = "0.5"
+criterion = "0.8.2"
 
 [[bench]]
 name = "math_benches"
