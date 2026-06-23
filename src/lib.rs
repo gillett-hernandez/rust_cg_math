@@ -8,6 +8,7 @@ pub mod misc;
 pub mod pdf;
 pub mod point;
 pub mod prelude;
+pub mod quantity;
 pub mod random;
 pub mod ray;
 pub mod sample;

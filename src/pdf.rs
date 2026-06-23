@@ -147,9 +147,9 @@ where
 /// ```compile_fail
 /// use math::prelude::*;
 ///
-/// let f: Integrand<f32, Throughput> = Integrand::new(1.0);
+/// let f: Integrand<f32, ThroughputMeasure> = Integrand::new(1.0);
 /// let p: PDF<f32, Area> = PDF::new(1.0);
-/// let _est = f / p; // ERROR: Throughput ≠ Area
+/// let _est = f / p; // ERROR: ThroughputMeasure ≠ Area
 /// ```
 ///
 /// [`PDF::convert`] changes the measure tag, so a converted density no longer
@@ -439,7 +439,7 @@ impl<T: Field> PDF<T, Area> {
 
 // // impl<T> PDF<T, ProjectedSolidAngle> where T: Field {}
 // impl<T: Field> PDF<T, ProjectedSolidAngle> {
-//     fn convert_to_throughput(self, area_pdf: PDF<T, Area>) -> PDF<T, Throughput> {
+//     fn convert_to_throughput(self, area_pdf: PDF<T, Area>) -> PDF<T, ThroughputMeasure> {
 //         (*area_pdf * *self).into()
 //     }
 // }

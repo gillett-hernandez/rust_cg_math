@@ -11,6 +11,7 @@ pub use crate::dual::{Dual, SampleField, reciprocal_det_3, reciprocal_gram_det_2
 pub use crate::misc::*;
 pub use crate::pdf::*;
 pub use crate::point::Point3;
+pub use crate::quantity::*;
 pub use crate::random::*;
 pub use crate::ray::*;
 pub use crate::sample::*;

@@ -11,8 +11,8 @@
 
 use std::f32::consts::PI;
 
-use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 use math::curves::Op;
 use math::prelude::*;
@@ -95,9 +95,7 @@ where
     group.bench_function("mat4_mul_point3", |bn| {
         bn.iter(|| black_box(m) * black_box(p))
     });
-    group.bench_function("mat4_transpose", |bn| {
-        bn.iter(|| black_box(m).transpose())
-    });
+    group.bench_function("mat4_transpose", |bn| bn.iter(|| black_box(m).transpose()));
     group.bench_function("mat4_try_inverse", |bn| {
         bn.iter(|| black_box(m).try_inverse())
     });
@@ -214,7 +212,10 @@ where
     // benefit of wider lanes; Polynomial / Cauchy are pure arithmetic.
     let lambda = Vector::<S::f32x4>::splat(550.0);
     let exponential = Curve::y_bar();
-    let blackbody = Curve::Blackbody { temperature: 5500.0, boost: 1.0 };
+    let blackbody = Curve::Blackbody {
+        temperature: 5500.0,
+        boost: 1.0,
+    };
     let polynomial = Curve::Polynomial {
         domain_range_mapping: [600.0, 200.0, 0.0, 1.0],
         coefficients: [0.5, 0.1, -0.2, 0.05, 0.01, 0.0, 0.0, 0.0],
@@ -313,7 +314,10 @@ fn bench_curve_variants(c: &mut Criterion) {
         ),
         (
             "blackbody",
-            Curve::Blackbody { temperature: 5500.0, boost: 1.0 },
+            Curve::Blackbody {
+                temperature: 5500.0,
+                boost: 1.0,
+            },
         ),
         ("machine", machine),
     ];

@@ -228,9 +228,9 @@ impl ChartedMeasure<SphericalCoordinates> for ProjectedSolidAngle {
 ///      differential area x differential projected solid angle
 ///      or the differential projected area x differential solid angle
 ///      = |w . N| * differential area * differential solid angle
-pub type Throughput = ProductMeasure<Area, ProjectedSolidAngle>;
+pub type ThroughputMeasure = ProductMeasure<Area, ProjectedSolidAngle>;
 
-/// the path throughput measure is the product measure of multiple normal Throughput measures, determined by the rank
+/// the path throughput measure is the product measure of multiple normal ThroughputMeasure measures, determined by the rank
 #[derive(Debug, Copy, Clone)]
 pub struct PathThroughput<N: Unsigned>(PhantomData<N>);
 
@@ -241,14 +241,14 @@ impl<N: Unsigned> Default for PathThroughput<N> {
     }
 }
 
-impl<N> Mul<Throughput> for PathThroughput<N>
+impl<N> Mul<ThroughputMeasure> for PathThroughput<N>
 where
     N: Unsigned + Add<U1>,
     Sum<N, U1>: Unsigned,
 {
     type Output = PathThroughput<Sum<N, U1>>;
     #[inline(always)]
-    fn mul(self, _: Throughput) -> Self::Output {
+    fn mul(self, _: ThroughputMeasure) -> Self::Output {
         Self::Output::default()
     }
 }
@@ -319,7 +319,7 @@ impl<N: Unsigned> Domain for AreaProductDomain<N> {}
 /// The **area-product measure** on path space (Veach §8.A, `μ^a`): the product of
 /// `N` copies of the surface-[`Area`] measure, one per path vertex. Path
 /// contributions in a vertex-area formulation are densities w.r.t. this measure,
-/// which is *distinct* from the throughput measure [`Throughput`] /
+/// which is *distinct* from the throughput measure [`ThroughputMeasure`] /
 /// [`PathThroughput`] (the latter folds in the geometry/cosine terms). Tagging a
 /// `PDF` / `Integrand` with `AreaProduct<N>` lets #1's `Integrand / PDF` division
 /// cancel two path quantities only when their vertex counts match.
@@ -638,10 +638,11 @@ mod test {
     #[test]
     fn path_throughput_extends_rank() {
         use typenum::{U2, U3};
-        // multiplying by one Throughput factor appends one path vertex: the rank
+        // multiplying by one ThroughputMeasure factor appends one path vertex: the rank
         // increments by U1 (not the old Add<N> doubling). Checked at compile time
         // by the type ascription on the binding.
-        let _: PathThroughput<U3> = PathThroughput::<U2>::default() * Throughput::default();
+        let _: PathThroughput<U3> =
+            PathThroughput::<U2>::default() * ThroughputMeasure::default();
     }
 
     #[test]
