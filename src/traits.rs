@@ -86,6 +86,48 @@ impl ChartedMeasure<R> for Length {
     }
 }
 
+/// Spectral measure `dλ` over wavelength. Physically a length (nm), but a
+/// **distinct measure type** from [`Length`]: spectral selection is its own
+/// integration axis (the `Λ` axis, TODO #20/#23). Keeping it distinct turns the
+/// #20 bug — a wavelength pdf silently typed `PDF<_, Length>` and then dropped —
+/// into a compile error, because `PDF<_, Length> ≠ PDF<_, Wavelength>` and an
+/// `Integrand<_, Wavelength>` may only be divided by a `PDF<_, Wavelength>`.
+///
+/// Integrating over the sampled wavelength is the *ordinary* estimator division
+/// (`Integrand<_, Wavelength> / PDF<_, Wavelength> → Estimate`); the measure
+/// cancels, so no bespoke Radon–Nikodym conversion is needed.
+///
+/// ```
+/// use math::prelude::*;
+/// let f: Integrand<f32, Wavelength> = Integrand::new(6.0);
+/// let p: PDF<f32, Wavelength> = PDF::new(2.0);
+/// let est: Estimate<f32> = f / p; // integrate out λ
+/// assert_eq!(*est, 3.0);
+/// ```
+///
+/// A wavelength density cannot stand in for a length density (the #20 bug):
+/// ```compile_fail
+/// use math::prelude::*;
+/// let f: Integrand<f32, Wavelength> = Integrand::new(1.0);
+/// let p: PDF<f32, Length> = PDF::new(1.0);
+/// let _ = f / p; // ERROR: no `Div` impl — Wavelength ≠ Length
+/// ```
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Wavelength;
+impl Measure for Wavelength {
+    type Domain = RealLine;
+}
+impl ChartedMeasure<R> for Wavelength {
+    #[inline(always)]
+    fn measure(set: SimpleSet<R>) -> f32 {
+        set.span()
+    }
+    #[inline(always)]
+    fn differential_measure(_: Element<R>) -> f32 {
+        1.0
+    }
+}
+
 /// area measure, the standard one formed by the product measure of two standard lebesgue length measures
 pub type Area = ProductMeasure<Length, Length>;
 
@@ -229,6 +271,14 @@ impl ChartedMeasure<SphericalCoordinates> for ProjectedSolidAngle {
 ///      or the differential projected area x differential solid angle
 ///      = |w . N| * differential area * differential solid angle
 pub type ThroughputMeasure = ProductMeasure<Area, ProjectedSolidAngle>;
+
+/// Per-wavelength (spectral) throughput measure — the ray-space throughput
+/// measure tensored with the spectral measure, `ThroughputMeasure × dλ`. A
+/// spectral (per-λ) radiance is an `Integrand<_, SpectralThroughputMeasure>`;
+/// integrating over the sampled wavelength divides by the `PDF<_, Wavelength>`
+/// factor (the [`Wavelength`] measure cancels), leaving an
+/// `Integrand<_, ThroughputMeasure>`.
+pub type SpectralThroughputMeasure = ProductMeasure<ThroughputMeasure, Wavelength>;
 
 /// the path throughput measure is the product measure of multiple normal ThroughputMeasure measures, determined by the rank
 #[derive(Debug, Copy, Clone)]
