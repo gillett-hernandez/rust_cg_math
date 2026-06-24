@@ -29,12 +29,14 @@
 //! - `Importance × Radiance = Estimate`                 (the measurement, Veach §3.7.1)
 
 use crate::prelude::*;
-use std::ops::Deref;
+use std::{fmt, marker::PhantomData, ops::Deref};
 
 /// Marker for a radiometric quantity (the `Measurable` idea from the original
 /// `traits.rs` sketch). Lets generic code bound on "is a radiometric quantity"
-/// without enumerating each newtype.
-pub trait Quantity: Copy {
+/// without enumerating each newtype. Implemented by the legacy newtypes
+/// ([`Radiance`], [`Importance`], …) and by the dimension/role/measure-tagged
+/// [`Quantity`] carrier (TODO #23 Slice 3).
+pub trait Measurable: Copy {
     /// The underlying energy field type (`f32`, `Vector<R>`, …).
     type Field: Field;
     /// Read the raw value out of the quantity.
@@ -45,10 +47,10 @@ pub trait Quantity: Copy {
 /// belongs to (Veach §3.7.3). Role is deliberately *not* a dimension: importance
 /// `W_e` and radiance `L` carry the *same* dimensions, so the radiance/importance
 /// distinction can only be a separate zero-cost phantom. It lets the measurement
-/// bridge `⟨W_e, L⟩ = Adjoint × Primal → Estimate` (Veach §3.7.1) be typed while a
+/// bridge `⟨W_e, L⟩ = Adjoint × Prime → Estimate` (Veach §3.7.1) be typed while a
 /// nonsensical `L · L` is rejected. Consumed by the Slice 3 carrier (TODO #23).
 pub trait Role: Copy + Default {
-    /// The opposite transport role (`Primal ↔ Adjoint`) — the partner a
+    /// The opposite transport role (`Prime ↔ Adjoint`) — the partner a
     /// measurement pairs this role with.
     type Dual: Role;
 }
@@ -56,21 +58,21 @@ pub trait Role: Copy + Default {
 /// The **primal** transport solution: radiance / the measurement carried toward
 /// the sensor.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
-pub struct Primal;
+pub struct Prime;
 /// The **adjoint** transport solution: importance carried from the sensor
 /// (particle / light tracing).
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct Adjoint;
 
-impl Role for Primal {
+impl Role for Prime {
     type Dual = Adjoint;
 }
 impl Role for Adjoint {
-    type Dual = Primal;
+    type Dual = Prime;
 }
 
 /// Generates a `pub struct Name<E>(pub E)` newtype with `Deref<Target = E>`,
-/// `Quantity`, and the usual derives, so the per-quantity blocks below only have
+/// `Measurable`, and the usual derives, so the per-quantity blocks below only have
 /// to spell out the algebra that is unique to them.
 macro_rules! quantity {
     ($(#[$m:meta])* $name:ident) => {
@@ -86,7 +88,7 @@ macro_rules! quantity {
             }
         }
 
-        impl<E: Field> Quantity for $name<E> {
+        impl<E: Field> Measurable for $name<E> {
             type Field = E;
             #[inline(always)]
             fn value(self) -> E {
@@ -116,12 +118,10 @@ quantity!(
     /// (Veach §3.4.2).
     Irradiance
 );
-quantity!(
-    /// A bidirectional scattering distribution value `f_s` (units sr⁻¹),
-    /// Veach §3.6. Combine with a cosine and a directional density via
-    /// [`BSDF::estimator`] to get a dimensionless [`Throughput`] factor.
-    BSDF
-);
+// NOTE(task #23): `BSDF` is no longer a bespoke newtype — it is the first
+// quantity migrated onto the dimension/role/measure-tagged [`Quantity`] carrier,
+// defined as a type alias further down (see the "carrier" section). Its algebra
+// (`estimator`) is implemented on the carrier instantiation directly.
 quantity!(
     /// Dimensionless path throughput `β`: the running product of `f·cos/pdf`
     /// ratios along a path. Carries no units — it scales a transported quantity.
@@ -265,11 +265,152 @@ impl<E: Field> From<Emission<E>> for Radiance<E> {
     }
 }
 
+// ===========================================================================
+// The dimension/role/measure-tagged carrier (TODO #23 Slice 3).
+//
+// `Quantity<T, D, R, M>` is the *generated* form the bespoke newtypes above are
+// migrating toward: it carries, on zero-cost phantom tags, the base-dimension
+// exponent algebra `D` (`dimension::*`), the transport [`Role`] `R`, and the
+// reference [`Measure`] `M`. A mismatched dimension or measure becomes a compile
+// error, and the bespoke `Mul`/`Div`/measurement impls *derive* from the tags.
+//
+// Migration is incremental: only `BSDF` is on the carrier so far (the others stay
+// newtypes so PT/LT keep compiling). The tags are markers, so a `Quantity` is the
+// same size/codegen as the bare `T` it wraps (asserted in the tests).
+// ===========================================================================
+
+/// A radiometric value of field `T`, tagged with its dimension `D`
+/// ([`dimension::Dimension`]), transport [`Role`] `R`, and reference [`Measure`]
+/// `M`. All three tags are zero-sized phantoms — the value is just a `T`.
+///
+/// `PhantomData<fn() -> (D, R, M)>` (not `*const _`) keeps the carrier
+/// `Send + Sync` for the threaded renderer while staying invariant in the tags.
+pub struct Quantity<T: Field, D: Dimension, R: Role, M: Measure> {
+    v: T,
+    tags: PhantomData<fn() -> (D, R, M)>,
+}
+
+impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
+    /// Wrap a raw field value with the (inferred) dimension/role/measure tags.
+    #[inline(always)]
+    pub fn new(v: T) -> Self {
+        Self {
+            v,
+            tags: PhantomData,
+        }
+    }
+
+    /// Re-tag this value with the canonical (normalized) form of its dimension —
+    /// a zero-cost coercion (the value is untouched). This is the "lazy"
+    /// normalization seam: build dimensions with the readable `Product`/base
+    /// types, then `normalize()` before storing into a canonically-typed field.
+    #[inline(always)]
+    pub fn normalize(self) -> Quantity<T, Normalized<D>, R, M>
+    where
+        D: Normalize,
+        Normalized<D>: Dimension,
+    {
+        Quantity::new(self.v)
+    }
+
+    /// View this value as an [`Integrand`] against its measure `M` — the bridge
+    /// into the Monte Carlo estimator (`Integrand / PDF → Estimate`).
+    #[inline(always)]
+    pub fn as_integrand(self) -> Integrand<T, M> {
+        Integrand::new(self.v)
+    }
+}
+
+// Manual Clone/Copy/Debug so the tags need not be `Copy`/`Debug` themselves
+// (e.g. the dimension markers don't implement `PartialEq`): the phantom is always
+// `Copy`, and only the value `T` participates.
+impl<T: Field, D: Dimension, R: Role, M: Measure> Clone for Quantity<T, D, R, M> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T: Field, D: Dimension, R: Role, M: Measure> Copy for Quantity<T, D, R, M> {}
+
+impl<T: Field + fmt::Debug, D: Dimension, R: Role, M: Measure> fmt::Debug for Quantity<T, D, R, M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Quantity({:?})", self.v)
+    }
+}
+
+impl<T: Field, D: Dimension, R: Role, M: Measure> Deref for Quantity<T, D, R, M> {
+    type Target = T;
+    #[inline(always)]
+    fn deref(&self) -> &T {
+        &self.v
+    }
+}
+
+impl<T: Field, D: Dimension, R: Role, M: Measure> From<T> for Quantity<T, D, R, M> {
+    #[inline(always)]
+    fn from(v: T) -> Self {
+        Self::new(v)
+    }
+}
+
+impl<T: Field, D: Dimension, R: Role, M: Measure> Measurable for Quantity<T, D, R, M> {
+    type Field = T;
+    #[inline(always)]
+    fn value(self) -> T {
+        self.v
+    }
+}
+
+/// Scale a tagged quantity by a dimensionless field weight (a MIS weight, `1/N`,
+/// a cosine already folded in elsewhere) — tags unchanged.
+impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<T> for Quantity<T, D, R, M> {
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: T) -> Self {
+        Quantity::new(self.v * rhs)
+    }
+}
+impl<T: Field, D: Dimension, R: Role, M: Measure> Div<T> for Quantity<T, D, R, M> {
+    type Output = Self;
+    #[inline(always)]
+    fn div(self, rhs: T) -> Self {
+        Quantity::new(self.v / rhs)
+    }
+}
+
+/// Accumulate two quantities of the *same* dimension (up to normalization), role,
+/// and measure. The output is tagged with the canonical (normalized) dimension —
+/// the carrier's combining op normalizes its own output (the practical "lazy"
+/// rule), so accumulation is a renormalization seam.
+impl<T, D1, D2, R, M> Add<Quantity<T, D2, R, M>> for Quantity<T, D1, R, M>
+where
+    T: Field,
+    D1: Dimension + Normalize,
+    D2: Dimension + SameDimension<D1>,
+    Normalized<D1>: Dimension,
+    R: Role,
+    M: Measure,
+{
+    type Output = Quantity<T, Normalized<D1>, R, M>;
+    #[inline(always)]
+    fn add(self, rhs: Quantity<T, D2, R, M>) -> Self::Output {
+        Quantity::new(self.v + rhs.v)
+    }
+}
+
 // ---------------------------------------------------------------------------
-// The bridge between the quantity axis and the measure axis.
+// `BSDF` — the first quantity on the carrier. A BSDF value `f_s` has dimension
+// `Ω⁻¹` (`BsdfDim`) and is an integrand against **projected** solid angle; it is
+// a primal-side quantity.
 // ---------------------------------------------------------------------------
 
-impl<E: Field + FromScalar<f32>> BSDF<E> {
+/// A bidirectional scattering distribution value `f_s` (units sr⁻¹), Veach §3.6
+/// — now a [`Quantity`] carrier instantiation (`Ω⁻¹`, primal, per projected solid
+/// angle). Combine with a cosine and a directional density via [`BSDF::estimator`]
+/// to get a dimensionless [`Throughput`] factor.
+pub type BSDF<E> = Quantity<E, BsdfDim, Prime, ProjectedSolidAngle>;
+
+impl<E: Field + FromScalar<f32>> Quantity<E, BsdfDim, Prime, ProjectedSolidAngle> {
     /// The single-bounce Monte Carlo factor `f · cos θ / pdf`, as a dimensionless
     /// [`Throughput`].
     ///
@@ -286,8 +427,7 @@ impl<E: Field + FromScalar<f32>> BSDF<E> {
     #[inline(always)]
     pub fn estimator(self, cos_theta: f32, pdf: PDF<E, SolidAngle>) -> Throughput<E> {
         let pdf_psa: PDF<E, ProjectedSolidAngle> = pdf.convert(DirectionalGeom { cos_theta });
-        let integrand: Integrand<E, ProjectedSolidAngle> = Integrand::new(self.0);
-        let est: Estimate<E> = integrand / pdf_psa;
+        let est: Estimate<E> = self.as_integrand() / pdf_psa;
         Throughput(*est)
     }
 }
@@ -319,18 +459,64 @@ impl<E: Field> Mul<Importance<E>> for Radiance<E> {
 mod test {
     use super::*;
 
+    // --- the Quantity carrier (Slice 3) ----------------------------------
+
+    #[test]
+    fn carrier_is_zero_cost_and_threadsafe() {
+        // Lane-generic over the field: scalar f32 and a SIMD register both work.
+        type Lanes = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+        // The tags are phantoms: a tagged quantity is the same size as its field.
+        assert_eq!(std::mem::size_of::<BSDF<f32>>(), std::mem::size_of::<f32>());
+        assert_eq!(
+            std::mem::size_of::<BSDF<Vector<Lanes>>>(),
+            std::mem::size_of::<Vector<Lanes>>()
+        );
+        // Send + Sync for the threaded renderer.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BSDF<f32>>();
+        assert_send_sync::<BSDF<Vector<Lanes>>>();
+    }
+
+    #[test]
+    fn bsdf_estimator_matches_f_cos_over_pdf() {
+        // f·cos/p_σ via the measure-correct bridge.
+        let f = BSDF::<f32>::new(0.5);
+        let pdf: PDF<f32, SolidAngle> = PDF::new(0.25);
+        let beta = f.estimator(0.4, pdf);
+        // f·cos/p = 0.5·0.4/0.25 = 0.8
+        assert!((*beta - 0.8).abs() < 1e-6, "got {}", *beta);
+    }
+
+    #[test]
+    fn carrier_scales_and_derefs() {
+        let f = BSDF::<f32>::new(0.6);
+        assert_eq!(*f, 0.6); // Deref
+        assert_eq!(*(f * 0.5), 0.3); // Mul<T>
+        assert_eq!(*(f / 2.0), 0.3); // Div<T>
+        assert_eq!(f.value(), 0.6); // Measurable
+    }
+
+    #[test]
+    fn carrier_normalize_is_value_noop() {
+        // `normalize()` is a zero-cost retag — value untouched, dimension becomes
+        // the canonical form.
+        let f = BSDF::<f32>::new(0.7);
+        let n: Quantity<f32, Normalized<BsdfDim>, Prime, ProjectedSolidAngle> = f.normalize();
+        assert_eq!(*n, 0.7);
+    }
+
     #[test]
     fn role_duals_are_opposite() {
-        // Compile-time: Primal and Adjoint are each other's dual.
+        // Compile-time: Prime and Adjoint are each other's dual.
         fn assert_dual<R: Role, D: Role>()
         where
             R: Role<Dual = D>,
         {
         }
-        assert_dual::<Primal, Adjoint>();
-        assert_dual::<Adjoint, Primal>();
+        assert_dual::<Prime, Adjoint>();
+        assert_dual::<Adjoint, Prime>();
         // Roles are zero-sized phantoms.
-        assert_eq!(std::mem::size_of::<Primal>(), 0);
+        assert_eq!(std::mem::size_of::<Prime>(), 0);
         assert_eq!(std::mem::size_of::<Adjoint>(), 0);
     }
 
@@ -368,7 +554,7 @@ mod test {
     #[test]
     fn bsdf_estimator_is_f_cos_over_pdf() {
         // f = 0.5 sr^-1, cos = 0.8, p_σ = 0.4 sr^-1  →  0.5 * 0.8 / 0.4 = 1.0
-        let f = BSDF(0.5_f32);
+        let f = BSDF::new(0.5_f32);
         let beta = f.estimator(0.8, PDF::<f32, SolidAngle>::new(0.4));
         assert!((*beta - 1.0).abs() < 1e-6, "got {}", *beta);
     }
