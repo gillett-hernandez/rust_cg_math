@@ -355,6 +355,23 @@ where
     type Output = <Normalized<D0> as Merge<Normalized<D1>>>::Output;
 }
 
+// The canonical forms are *already* normalized, so `Normalize` is idempotent on
+// them. This matters for the carrier (Slice 3): a quantity alias is defined as the
+// normalized form (e.g. `Quantity<_, Normalized<RadianceDim>, _, _>`), and the
+// carrier's `Add` re-normalizes its output; idempotency lands that output back on
+// the *same* type so accumulation (`l += l`) type-checks. A `Cons`/`Nil`/`Term`
+// only ever arises from `Insert`/`Merge`, which maintain the sorted, zero-free
+// invariant, so treating it as its own canonical form is sound.
+impl Normalize for Nil {
+    type Output = Nil;
+}
+impl<A: Axis, N: Integer> Normalize for Term<A, N> {
+    type Output = Cons<Term<A, N>, Nil>;
+}
+impl<H, T> Normalize for Cons<H, T> {
+    type Output = Cons<H, T>;
+}
+
 /// Insert `Term<A, N>` into a sorted list: keep it key-ascending, **sum**
 /// exponents on a key collision, and **drop** any term whose exponent cancels to
 /// zero. `N` may be zero on entry (it is then dropped).

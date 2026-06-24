@@ -23,7 +23,7 @@
 //! `Mul` / `Div` / `Add` impls encoding only the physically meaningful algebra:
 //!
 //! - `Throughput × Throughput = Throughput`             (extend a path)
-//! - `Throughput × Radiance   = Radiance`               (and `Importance`, `Emission`)
+//! - `Throughput × Radiance   = Radiance`               (and `Importance`)
 //! - `Radiance + Radiance`                              (accumulate; ditto `Importance`)
 //! - [`BSDF::estimator`] — the bridge to the measure layer: `f·cos/pdf`
 //! - `Importance × Radiance = Estimate`                 (the measurement, Veach §3.7.1)
@@ -98,30 +98,14 @@ macro_rules! quantity {
     };
 }
 
-quantity!(
-    /// Radiance `L` (W·m⁻²·sr⁻¹), the quantity transported toward the camera
-    /// (Veach §3.4.3). What a path tracer accumulates.
-    Radiance
-);
-quantity!(
-    /// Importance `W_e`, the adjoint of radiance — the quantity transported from
-    /// the sensor in particle/light tracing (Veach §3.7.3).
-    Importance
-);
-quantity!(
-    /// Emitted exitant radiance `L_e` (Veach §3.5). Enters transport as
-    /// [`Radiance`] (see the `From` impl).
-    Emission
-);
-quantity!(
-    /// Irradiance `E` (W·m⁻²) — radiance integrated over the projected hemisphere
-    /// (Veach §3.4.2).
-    Irradiance
-);
-// NOTE(task #23): `BSDF` is no longer a bespoke newtype — it is the first
-// quantity migrated onto the dimension/role/measure-tagged [`Quantity`] carrier,
-// defined as a type alias further down (see the "carrier" section). Its algebra
-// (`estimator`) is implemented on the carrier instantiation directly.
+// NOTE(task #23): `Radiance`, `Importance`, and `Irradiance` are no longer
+// bespoke newtypes — they are migrated onto the dimension/role/measure-tagged
+// [`Quantity`] carrier and defined as type aliases further down (see the
+// "carrier" section), alongside `BSDF`. `Emission` is gone entirely: emitted
+// radiance *is* radiance, so `Material::emission` now returns [`Radiance`]
+// directly. Only [`Throughput`] remains a hand-written newtype — it is genuinely
+// dimensionless, roleless, and measureless (a path weight, not a point in the
+// (dimension, role, measure) space), so it has no honest carrier tags.
 quantity!(
     /// Dimensionless path throughput `β`: the running product of `f·cos/pdf`
     /// ratios along a path. Carries no units — it scales a transported quantity.
@@ -194,76 +178,13 @@ impl<E: Field> Div<E> for Throughput<E> {
 // Both orders are provided so call sites read naturally.
 // ---------------------------------------------------------------------------
 
-macro_rules! throughput_scales {
-    ($q:ident) => {
-        impl<E: Field> Mul<$q<E>> for Throughput<E> {
-            type Output = $q<E>;
-            #[inline(always)]
-            fn mul(self, rhs: $q<E>) -> $q<E> {
-                $q(self.0 * rhs.0)
-            }
-        }
-        impl<E: Field> Mul<Throughput<E>> for $q<E> {
-            type Output = $q<E>;
-            #[inline(always)]
-            fn mul(self, rhs: Throughput<E>) -> $q<E> {
-                $q(self.0 * rhs.0)
-            }
-        }
-    };
-}
-
-throughput_scales!(Radiance);
-throughput_scales!(Importance);
-throughput_scales!(Emission);
-
-// ---------------------------------------------------------------------------
-// Transported quantities accumulate, and may be scaled by a dimensionless field
-// weight (a MIS weight, or 1/N). Same shape as math's `Estimate`.
-// ---------------------------------------------------------------------------
-
-macro_rules! transported {
-    ($q:ident) => {
-        impl<E: Field> $q<E> {
-            #[inline(always)]
-            pub fn zero() -> Self {
-                $q(E::ZERO)
-            }
-        }
-        impl<E: Field> Add for $q<E> {
-            type Output = Self;
-            #[inline(always)]
-            fn add(self, rhs: Self) -> Self {
-                $q(self.0 + rhs.0)
-            }
-        }
-        impl<E: Field> AddAssign for $q<E> {
-            #[inline(always)]
-            fn add_assign(&mut self, rhs: Self) {
-                self.0 = self.0 + rhs.0;
-            }
-        }
-        /// Scale by a dimensionless field weight (MIS weight, 1/N, …).
-        impl<E: Field> Mul<E> for $q<E> {
-            type Output = Self;
-            #[inline(always)]
-            fn mul(self, rhs: E) -> Self {
-                $q(self.0 * rhs)
-            }
-        }
-    };
-}
-
-transported!(Radiance);
-transported!(Importance);
-
-/// Emitted radiance enters light transport as radiance.
-impl<E: Field> From<Emission<E>> for Radiance<E> {
-    #[inline(always)]
-    fn from(e: Emission<E>) -> Self {
-        Radiance(e.0)
-    }
-}
+// `Throughput` scaling a carrier-borne transported quantity (`β · L = L`,
+// `β · W_e = W_e`) is provided generically further down, on the [`Quantity`]
+// carrier itself (`Mul<Throughput> for Quantity`), so it covers every
+// transported alias at once without a per-quantity macro. The carrier also
+// supplies accumulation (`Add`/`AddAssign` with `SameDimension`) and
+// dimensionless field scaling (`Mul<T>`), which the old `transported!` macro
+// hand-rolled per newtype.
 
 // ===========================================================================
 // The dimension/role/measure-tagged carrier (TODO #23 Slice 3).
@@ -298,6 +219,12 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
             v,
             tags: PhantomData,
         }
+    }
+
+    /// The additive identity (a zero radiance / importance accumulator).
+    #[inline(always)]
+    pub fn zero() -> Self {
+        Self::new(T::ZERO)
     }
 
     /// Re-tag this value with the canonical (normalized) form of its dimension —
@@ -398,6 +325,68 @@ where
     }
 }
 
+/// In-place accumulation `l += l2` of two quantities of the *same* dimension (up
+/// to normalization), role, and measure. Unlike `Add` (which retags its output to
+/// the canonical dimension), `AddAssign` keeps `self`'s dimension tag `D1` — it
+/// mutates the value in place, so the type cannot change.
+impl<T, D1, D2, R, M> AddAssign<Quantity<T, D2, R, M>> for Quantity<T, D1, R, M>
+where
+    T: Field,
+    D1: Dimension,
+    D2: Dimension + SameDimension<D1>,
+    R: Role,
+    M: Measure,
+{
+    #[inline(always)]
+    fn add_assign(&mut self, rhs: Quantity<T, D2, R, M>) {
+        self.v = self.v + rhs.v;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `Throughput` carries a transported quantity: `β · L = L`, `β · W_e = W_e`.
+// Provided once on the carrier (covering every transported alias), in both orders
+// so call sites read naturally. The tags are preserved — throughput is a
+// dimensionless/roleless/measureless scalar weight.
+// ---------------------------------------------------------------------------
+
+impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Throughput<T>> for Quantity<T, D, R, M> {
+    type Output = Self;
+    #[inline(always)]
+    fn mul(self, rhs: Throughput<T>) -> Self {
+        Quantity::new(self.v * rhs.0)
+    }
+}
+impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Quantity<T, D, R, M>> for Throughput<T> {
+    type Output = Quantity<T, D, R, M>;
+    #[inline(always)]
+    fn mul(self, rhs: Quantity<T, D, R, M>) -> Quantity<T, D, R, M> {
+        Quantity::new(self.0 * rhs.v)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The transported-quantity aliases (TODO #23). Radiance and importance share the
+// same dimension (`Φ·A⁻¹·Ω⁻¹`) and reference measure (throughput) and differ only
+// in transport [`Role`]; irradiance drops the solid-angle axis. Each is defined
+// against the *normalized* dimension so the carrier's `Add` (which retags to the
+// canonical form) lands back on the same alias type.
+// ---------------------------------------------------------------------------
+
+/// Radiance `L` (W·m⁻²·sr⁻¹) — the primal quantity transported toward the camera
+/// (Veach §3.4.3). Emitted radiance `L_e` is the same type (no separate
+/// `Emission`). What a path tracer accumulates.
+pub type Radiance<E> = Quantity<E, Normalized<RadianceDim>, Prime, ThroughputMeasure>;
+
+/// Importance `W_e` — the adjoint of radiance, transported from the sensor in
+/// particle / light tracing (Veach §3.7.3). Same dimension and measure as
+/// [`Radiance`], opposite [`Role`].
+pub type Importance<E> = Quantity<E, Normalized<RadianceDim>, Adjoint, ThroughputMeasure>;
+
+/// Irradiance `E` (W·m⁻²) — radiance integrated over the projected hemisphere
+/// (Veach §3.4.2). An integrand against area.
+pub type Irradiance<E> = Quantity<E, Normalized<IrradianceDim>, Prime, Area>;
+
 // ---------------------------------------------------------------------------
 // `BSDF` — the first quantity on the carrier. A BSDF value `f_s` has dimension
 // `Ω⁻¹` (`BsdfDim`) and is an integrand against **projected** solid angle; it is
@@ -443,7 +432,7 @@ impl<E: Field> Mul<Radiance<E>> for Importance<E> {
     type Output = Estimate<E>;
     #[inline(always)]
     fn mul(self, rhs: Radiance<E>) -> Estimate<E> {
-        Estimate::new(self.0 * rhs.0)
+        Estimate::new(*self * *rhs)
     }
 }
 
@@ -451,7 +440,7 @@ impl<E: Field> Mul<Importance<E>> for Radiance<E> {
     type Output = Estimate<E>;
     #[inline(always)]
     fn mul(self, rhs: Importance<E>) -> Estimate<E> {
-        Estimate::new(self.0 * rhs.0)
+        Estimate::new(*self * *rhs)
     }
 }
 
@@ -530,7 +519,7 @@ mod test {
 
     #[test]
     fn throughput_carries_radiance() {
-        let l = Radiance(2.0_f32);
+        let l = Radiance::new(2.0_f32);
         let beta = Throughput(0.25_f32);
         // both orders work and agree
         assert_eq!(*(beta * l), 0.5);
@@ -540,15 +529,9 @@ mod test {
     #[test]
     fn radiance_accumulates_with_mis_weight() {
         let mut sum = Radiance::<f32>::zero();
-        sum += Radiance(1.0) * 0.75; // MIS weight
-        sum += Radiance(2.0) * 0.25;
+        sum += Radiance::new(1.0) * 0.75; // MIS weight
+        sum += Radiance::new(2.0) * 0.25;
         assert_eq!(*sum, 1.25);
-    }
-
-    #[test]
-    fn emission_enters_as_radiance() {
-        let l: Radiance<f32> = Emission(3.0_f32).into();
-        assert_eq!(*l, 3.0);
     }
 
     #[test]
@@ -561,8 +544,8 @@ mod test {
 
     #[test]
     fn measurement_pairs_importance_and_radiance() {
-        let we = Importance(4.0_f32);
-        let l = Radiance(0.25_f32);
+        let we = Importance::new(4.0_f32);
+        let l = Radiance::new(0.25_f32);
         let est: Estimate<f32> = we * l;
         assert_eq!(*est, 1.0);
     }
@@ -574,8 +557,8 @@ mod test {
 ///
 /// ```compile_fail
 /// use math::prelude::*;
-/// let a: Radiance<f32> = Radiance(1.0);
-/// let b: Radiance<f32> = Radiance(2.0);
+/// let a: Radiance<f32> = Radiance::new(1.0);
+/// let b: Radiance<f32> = Radiance::new(2.0);
 /// let _m: Estimate<f32> = a * b; // ERROR: no `Mul<Radiance> for Radiance`
 /// ```
 ///
@@ -583,8 +566,8 @@ mod test {
 ///
 /// ```compile_fail
 /// use math::prelude::*;
-/// let l: Radiance<f32> = Radiance(1.0);
-/// let w: Importance<f32> = Importance(2.0);
+/// let l: Radiance<f32> = Radiance::new(1.0);
+/// let w: Importance<f32> = Importance::new(2.0);
 /// let _ = l + w; // ERROR: no `Add<Importance> for Radiance`
 /// ```
 ///
@@ -592,8 +575,8 @@ mod test {
 ///
 /// ```compile_fail
 /// use math::prelude::*;
-/// let f: BSDF<f32> = BSDF(0.5);
-/// let l: Radiance<f32> = Radiance(1.0);
+/// let f: BSDF<f32> = BSDF::new(0.5);
+/// let l: Radiance<f32> = Radiance::new(1.0);
 /// let _ = f * l; // ERROR: no `Mul<Radiance> for BSDF`
 /// ```
 #[cfg(doctest)]
