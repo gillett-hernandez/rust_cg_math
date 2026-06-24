@@ -68,35 +68,36 @@ impl<T: Field, M: Measure> Mul<T> for PDF<T, M> {
     }
 }
 
-/*impl<T: Field, M: Measure> Div for PDF<T, M> {
-    // must be under the same field and measure
-    // FIXME if you divide two pdfs of the same measure, does that result in a dimensionless quantity? or is it still a pdf? not sure.
-    type Output = Self;
-    fn div(self, rhs: Self) -> Self::Output {
-        PDF::new_with_measure(self.v / rhs.v, self.measure.combine(rhs.measure))
+/// `p / p'` for two densities of the **same** measure `M` is a dimensionless
+/// ratio: the measure cancels (a ratio of densities w.r.t. one measure carries no
+/// measure), so the result is a bare `T`, not another `PDF`. This resolves the
+/// old FIXME (TODO #23 B2). The BDPT MIS recurrence needs exactly this —
+/// `p_fwd_area / p_bwd_area → T` over matching `AreaProduct<N>` densities
+/// (TODO #21). Densities of *different* measures do not divide (it would be
+/// dimensionally meaningless), so that mismatch stays a compile error.
+///
+/// ```
+/// use math::prelude::*;
+/// let p: PDF<f32, Area> = PDF::new(6.0);
+/// let q: PDF<f32, Area> = PDF::new(2.0);
+/// let ratio: f32 = p / q; // same measure → bare scalar
+/// assert_eq!(ratio, 3.0);
+/// ```
+///
+/// Different measures are rejected:
+/// ```compile_fail
+/// use math::prelude::*;
+/// let p: PDF<f32, Area> = PDF::new(6.0);
+/// let q: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let _ = p / q; // ERROR: no `Div` impl — Area ≠ SolidAngle
+/// ```
+impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
+    type Output = T;
+    #[inline(always)]
+    fn div(self, rhs: PDF<T, M>) -> T {
+        self.v / rhs.v
     }
 }
-
-impl<T: Field, S: Scalar, M: Measure> Mul<S> for PDF<T, M>
-where
-    T: FromScalar<S>,
-{
-    type Output = Self;
-
-    fn mul(self, rhs: S) -> Self::Output {
-        PDF::new(self.v * T::from_scalar(rhs))
-    }
-}
-impl<T: Field, S: Scalar, M: Measure> Div<S> for PDF<T, M>
-where
-    T: FromScalar<S>,
-{
-    type Output = Self;
-
-    fn div(self, rhs: S) -> Self::Output {
-        PDF::new(self.v / T::from_scalar(rhs))
-    }
-} */
 
 // ===========================================================================
 // Monte Carlo estimation: integrand / pdf, with the measure checked at the type
@@ -470,6 +471,15 @@ mod test {
         let p: PDF<f32, Area> = PDF::new(2.0);
         let est: Estimate<f32> = f / p;
         assert_eq!(*est, 3.0);
+    }
+
+    #[test]
+    fn same_measure_pdf_ratio_is_scalar() {
+        // B2: p / p' over the same measure cancels to a bare dimensionless T.
+        let p: PDF<f32, Area> = PDF::new(6.0);
+        let q: PDF<f32, Area> = PDF::new(2.0);
+        let ratio: f32 = p / q;
+        assert_eq!(ratio, 3.0);
     }
 
     #[test]

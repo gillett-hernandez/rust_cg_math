@@ -41,6 +41,34 @@ pub trait Quantity: Copy {
     fn value(self) -> Self::Field;
 }
 
+/// Transport **role** of a radiometric quantity — which adjoint solution it
+/// belongs to (Veach §3.7.3). Role is deliberately *not* a dimension: importance
+/// `W_e` and radiance `L` carry the *same* dimensions, so the radiance/importance
+/// distinction can only be a separate zero-cost phantom. It lets the measurement
+/// bridge `⟨W_e, L⟩ = Adjoint × Primal → Estimate` (Veach §3.7.1) be typed while a
+/// nonsensical `L · L` is rejected. Consumed by the Slice 3 carrier (TODO #23).
+pub trait Role: Copy + Default {
+    /// The opposite transport role (`Primal ↔ Adjoint`) — the partner a
+    /// measurement pairs this role with.
+    type Dual: Role;
+}
+
+/// The **primal** transport solution: radiance / the measurement carried toward
+/// the sensor.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct Primal;
+/// The **adjoint** transport solution: importance carried from the sensor
+/// (particle / light tracing).
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct Adjoint;
+
+impl Role for Primal {
+    type Dual = Adjoint;
+}
+impl Role for Adjoint {
+    type Dual = Primal;
+}
+
 /// Generates a `pub struct Name<E>(pub E)` newtype with `Deref<Target = E>`,
 /// `Quantity`, and the usual derives, so the per-quantity blocks below only have
 /// to spell out the algebra that is unique to them.
@@ -290,6 +318,21 @@ impl<E: Field> Mul<Importance<E>> for Radiance<E> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn role_duals_are_opposite() {
+        // Compile-time: Primal and Adjoint are each other's dual.
+        fn assert_dual<R: Role, D: Role>()
+        where
+            R: Role<Dual = D>,
+        {
+        }
+        assert_dual::<Primal, Adjoint>();
+        assert_dual::<Adjoint, Primal>();
+        // Roles are zero-sized phantoms.
+        assert_eq!(std::mem::size_of::<Primal>(), 0);
+        assert_eq!(std::mem::size_of::<Adjoint>(), 0);
+    }
 
     #[test]
     fn throughput_extends_and_scales() {
