@@ -7,6 +7,15 @@ pub use thermite::prelude::*;
 
 pub use crate::bounds::*;
 pub use crate::color::*;
+// The dimensional algebra: re-export the combinators/trait and the composed
+// `*Dim` aliases, but NOT the bare base structs (`dimension::{Length, SolidAngle,
+// …}`), which deliberately shadow the measure names in `traits` — refer to those
+// as `dimension::Length<N>` etc. to avoid a glob collision.
+pub use crate::dimension::{
+    AreaDim, BsdfDim, Dimension, Dimensionless, DimensionlessDim, IrradianceDim, IsDimensionless,
+    LengthDim, Nil, Normalize, Normalized, PowerDim, Product, RadianceDim, Recip, SameDimension,
+    SolidAngleDim, WavelengthDim,
+};
 pub use crate::dual::{Dual, SampleField, reciprocal_det_3, reciprocal_gram_det_2};
 pub use crate::misc::*;
 pub use crate::pdf::*;

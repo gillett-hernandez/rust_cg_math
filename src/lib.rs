@@ -3,6 +3,7 @@
 pub mod bounds;
 pub mod color;
 pub mod curves;
+pub mod dimension;
 pub mod dual;
 pub mod misc;
 pub mod pdf;
