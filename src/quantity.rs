@@ -366,26 +366,44 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Quantity<T, D, R, M>> for 
 }
 
 // ---------------------------------------------------------------------------
-// The transported-quantity aliases (TODO #23). Radiance and importance share the
-// same dimension (`Φ·A⁻¹·Ω⁻¹`) and reference measure (throughput) and differ only
-// in transport [`Role`]; irradiance drops the solid-angle axis. Each is defined
-// against the *normalized* dimension so the carrier's `Add` (which retags to the
-// canonical form) lands back on the same alias type.
+// `Density` — a radiometric quantity whose dimension is *derived* from its
+// measure, not asserted alongside it (TODO #26). Veach App. 3.B: a quantity is a
+// Radon–Nikodym derivative `f = dQ/dϱ`, so `dim(f) = dim(Q) − dim(ϱ)`. Here `Num`
+// is the numerator dimension `dim(Q)` (the energy/sensor content) and `M`'s
+// [`Measure::Dim`] is `dim(ϱ)`; the carrier dimension is their normalized
+// quotient, so it can't drift from the measure `M` the quantity references.
+// ---------------------------------------------------------------------------
+
+/// A radiometric **density** of `Num` per measure `M`: the carrier dimension is
+/// derived as `Normalized(Num ÷ M::Dim)`. `Num` is the numerator dimension
+/// ([`PowerDim`] for radiance/irradiance, [`Dimensionless`] for a BSDF), `R` the
+/// transport [`Role`], `M` the reference [`Measure`].
+pub type Density<T, Num, R, M> =
+    Quantity<T, Normalized<Product<Num, Reciprocal<<M as Measure>::Dim>>>, R, M>;
+
+// ---------------------------------------------------------------------------
+// The transported-quantity aliases (TODO #23/#26). Radiance and importance share
+// the same numerator (`Φ`) and measure (throughput) and differ only in transport
+// [`Role`]; irradiance drops the solid-angle axis (measure = area). Defined via
+// [`Density`], so each dimension is *derived* `Φ ÷ dim(measure)` — Radiance
+// `Φ ÷ (A·σ⊥) = Φ·A⁻¹·Ω⁻¹`, Irradiance `Φ ÷ A = Φ·A⁻¹` — and normalized, so the
+// carrier's `Add` (which retags to canonical) lands back on the same alias type.
 // ---------------------------------------------------------------------------
 
 /// Radiance `L` (W·m⁻²·sr⁻¹) — the primal quantity transported toward the camera
 /// (Veach §3.4.3). Emitted radiance `L_e` is the same type (no separate
 /// `Emission`). What a path tracer accumulates.
-pub type Radiance<E> = Quantity<E, Normalized<RadianceDim>, Prime, ThroughputMeasure>;
+pub type Radiance<E> = Density<E, PowerDim, Prime, ThroughputMeasure>;
 
 /// Importance `W_e` — the adjoint of radiance, transported from the sensor in
 /// particle / light tracing (Veach §3.7.3). Same dimension and measure as
-/// [`Radiance`], opposite [`Role`].
-pub type Importance<E> = Quantity<E, Normalized<RadianceDim>, Adjoint, ThroughputMeasure>;
+/// [`Radiance`], opposite [`Role`]. (The radiance-normalized `W_e ≡ 1` renderer
+/// convention; a fully sensor-responsivity-faithful `Φ⁻¹` importance is TODO #27.)
+pub type Importance<E> = Density<E, PowerDim, Adjoint, ThroughputMeasure>;
 
 /// Irradiance `E` (W·m⁻²) — radiance integrated over the projected hemisphere
 /// (Veach §3.4.2). An integrand against area.
-pub type Irradiance<E> = Quantity<E, Normalized<IrradianceDim>, Prime, Area>;
+pub type Irradiance<E> = Density<E, PowerDim, Prime, Area>;
 
 // ---------------------------------------------------------------------------
 // `BSDF` — the first quantity on the carrier. A BSDF value `f_s` has dimension
@@ -397,9 +415,9 @@ pub type Irradiance<E> = Quantity<E, Normalized<IrradianceDim>, Prime, Area>;
 /// — now a [`Quantity`] carrier instantiation (`Ω⁻¹`, primal, per projected solid
 /// angle). Combine with a cosine and a directional density via [`BSDF::estimator`]
 /// to get a dimensionless [`Throughput`] factor.
-pub type BSDF<E> = Quantity<E, BsdfDim, Prime, ProjectedSolidAngle>;
+pub type BSDF<E> = Density<E, Dimensionless, Prime, ProjectedSolidAngle>;
 
-impl<E: Field + FromScalar<f32>> Quantity<E, BsdfDim, Prime, ProjectedSolidAngle> {
+impl<E: Field + FromScalar<f32>> BSDF<E> {
     /// The single-bounce Monte Carlo factor `f · cos θ / pdf`, as a dimensionless
     /// [`Throughput`].
     ///
@@ -549,6 +567,38 @@ mod test {
         let est: Estimate<f32> = we * l;
         assert_eq!(*est, 1.0);
     }
+
+    // --- #26: dimension derived from measure (Density) -------------------
+
+    /// Compile-time assertion that two dimensions are dimensionally equal.
+    fn assert_same<A: SameDimension<B>, B>() {}
+
+    #[test]
+    fn density_derives_the_handwritten_dimensions() {
+        // The whole point of #26: `Num ÷ M::Dim` reduces to the hand-written
+        // `*Dim`, grounded in Veach App. 3.B (`dim(f) = dim(Q) − dim(ϱ)`).
+        // Radiance: Φ ÷ dim(throughput) = Φ ÷ (A·σ⊥) = Φ·A⁻¹·Ω⁻¹.
+        assert_same::<
+            Product<PowerDim, Reciprocal<<ThroughputMeasure as Measure>::Dim>>,
+            RadianceDim,
+        >();
+        // Irradiance: Φ ÷ dim(area) = Φ ÷ A = Φ·A⁻¹.
+        assert_same::<Product<PowerDim, Reciprocal<<Area as Measure>::Dim>>, IrradianceDim>();
+        // BSDF: 1 ÷ dim(projected solid angle) = Ω⁻¹.
+        assert_same::<
+            Product<Dimensionless, Reciprocal<<ProjectedSolidAngle as Measure>::Dim>>,
+            BsdfDim,
+        >();
+    }
+
+    #[test]
+    fn solid_angle_variants_share_a_dimension() {
+        // The `Measure → Dim` map is many-to-one: `SolidAngle` and
+        // `ProjectedSolidAngle` are distinct measures (the cosine RN factor
+        // relates them) yet both carry dimension `Ω`. (That the *measures* stay
+        // distinct is asserted by the compile_fail in `CompileFailTests`.)
+        assert_same::<<SolidAngle as Measure>::Dim, <ProjectedSolidAngle as Measure>::Dim>();
+    }
 }
 
 /// Illegal algebra is rejected at compile time.
@@ -578,6 +628,16 @@ mod test {
 /// let f: BSDF<f32> = BSDF::new(0.5);
 /// let l: Radiance<f32> = Radiance::new(1.0);
 /// let _ = f * l; // ERROR: no `Mul<Radiance> for BSDF`
+/// ```
+///
+/// `SolidAngle` and `ProjectedSolidAngle` share dimension `Ω` (TODO #26) but are
+/// **distinct measures** — the `Measure → Dim` map is many-to-one and not
+/// invertible, so a density against one cannot stand in for the other:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+/// let p: PDF<f32, SolidAngle> = PDF::new(1.0);
+/// let _q: PDF<f32, ProjectedSolidAngle> = p; // ERROR: different measures
 /// ```
 #[cfg(doctest)]
 struct CompileFailTests;

@@ -1,4 +1,4 @@
-use typenum::{Sum, U1, Unsigned};
+use typenum::{NonZero, PInt, Sum, U1, Unsigned};
 
 use crate::spaces::{
     Angles, Circle, DirectionalSector, DiskSpace, Directions, Domain, Element, Parameterization,
@@ -22,6 +22,17 @@ use std::{cmp::Ordering, fmt::Debug, marker::PhantomData};
 /// Radon–Nikodym factor (see `pdf::MeasureConversion`).
 pub trait Measure {
     type Domain: Domain;
+    /// The physical **dimension** of this measure — the type-level twin of its
+    /// Lebesgue content (`Length → L`, `SolidAngle → Ω`, a [`ProductMeasure`]'s
+    /// is the product of its factors'). A radiometric quantity's dimension is
+    /// then *derived* as `numerator ÷ Dim` (see [`Density`]) rather than asserted
+    /// independently, so it cannot drift from the measure it references. This is
+    /// the type-level form of Veach App. 3.B: a quantity is `f = dQ/dϱ`, so
+    /// `dim(f) = dim(Q) − dim(ϱ)` where `dim(ϱ)` is the product of the dimensions
+    /// of the Lebesgue measures `ϱ` is built from (TODO #26). The map is
+    /// many-to-one — `SolidAngle` and `ProjectedSolidAngle` share `Ω` yet are
+    /// distinct measures — so it joins the two families one-way, never fusing them.
+    type Dim: Dimension;
 }
 
 /// A [`Measure`] evaluated through a specific chart `P`. Splitting this off
@@ -50,6 +61,11 @@ pub struct ProductMeasure<A: Measure, B: Measure> {
 
 impl<A: Measure, B: Measure> Measure for ProductMeasure<A, B> {
     type Domain = ProductDomain<A::Domain, B::Domain>;
+    // The dimension structure mirrors the measure structure: the product of the
+    // factors' dimensions, via the *same* `Product`/`ProductMeasure` recursion.
+    // So `Area`/`ThroughputMeasure`/`SpectralThroughputMeasure` get their `Dim`
+    // for free from this one blanket impl.
+    type Dim = Product<A::Dim, B::Dim>;
 }
 
 impl<A, B, PA, PB> ChartedMeasure<ProductSet<PA, PB>> for ProductMeasure<A, B>
@@ -74,6 +90,7 @@ where
 pub struct Length;
 impl Measure for Length {
     type Domain = RealLine;
+    type Dim = LengthDim;
 }
 impl ChartedMeasure<R> for Length {
     #[inline(always)]
@@ -116,6 +133,7 @@ impl ChartedMeasure<R> for Length {
 pub struct Wavelength;
 impl Measure for Wavelength {
     type Domain = RealLine;
+    type Dim = WavelengthDim;
 }
 impl ChartedMeasure<R> for Wavelength {
     #[inline(always)]
@@ -138,6 +156,9 @@ pub struct Angle;
 
 impl Measure for Angle {
     type Domain = Angles;
+    // Plane angle (radians) is dimensionless — arc length over radius, an L/L
+    // ratio. (Distinct from `SolidAngle`'s `Ω`, which we *do* track.)
+    type Dim = Dimensionless;
 }
 impl ChartedMeasure<Circle> for Angle {
     #[inline(always)]
@@ -158,6 +179,9 @@ pub struct DiskAreaMeasure;
 // couples the factors.
 impl Measure for DiskAreaMeasure {
     type Domain = ProductDomain<Angles, RealLine>;
+    // A disk area measure (∫∫ r dr dθ) has dimension area, `L²` — even though it
+    // is charted by (angle, radius) and is not a `ProductMeasure`.
+    type Dim = AreaDim;
 }
 impl ChartedMeasure<DiskSpace> for DiskAreaMeasure {
     #[inline(always)]
@@ -192,6 +216,7 @@ impl ChartedMeasure<DiskSpace> for DiskAreaMeasure {
 pub struct SolidAngle;
 impl Measure for SolidAngle {
     type Domain = Directions;
+    type Dim = SolidAngleDim;
 }
 impl ChartedMeasure<SphericalCoordinates> for SolidAngle {
     #[inline(always)]
@@ -235,6 +260,9 @@ impl ChartedMeasure<DirectionalSector> for SolidAngle {
 pub struct ProjectedSolidAngle {}
 impl Measure for ProjectedSolidAngle {
     type Domain = Directions;
+    // Same dimension `Ω` as `SolidAngle` — the projecting cosine `dσ⊥ = cosθ dσ`
+    // is dimensionless. (The many-to-one map; the measures stay distinct.)
+    type Dim = SolidAngleDim;
 }
 impl ChartedMeasure<SphericalCoordinates> for ProjectedSolidAngle {
     #[inline(always)]
@@ -343,8 +371,19 @@ impl<N: Unsigned> Domain for PathThroughputDomain<N> {}
 /// it carries no concrete chart, so it has no [`ChartedMeasure`] impl, but it can
 /// tag a `PDF` / `Integrand` so #1's `Integrand / PDF` division cancels two
 /// throughput-measure quantities only when their vertex counts match.
-impl<N: Unsigned> Measure for PathThroughput<N> {
+// Bounded `NonZero`: a rank-0 path measure is degenerate (a path has ≥1 vertex),
+// and `PInt<N>` — the positive-integer exponent — requires `N: NonZero`. Nothing
+// uses `PathThroughput<U0>` as a `Measure`, so this is not a real narrowing.
+impl<N: Unsigned + NonZero> Measure for PathThroughput<N> {
     type Domain = PathThroughputDomain<N>;
+    // `ThroughputMeasure^N = (A·σ⊥)^N = L^{2N}·Ω^N`. Built from the rank `N` as a
+    // positive exponent (two length factors give `L^{2N}` after normalization,
+    // one Ω factor gives `Ω^N`); fully-qualified to dodge the `Length`/
+    // `SolidAngle` measure shadows in this module.
+    type Dim = Product<
+        Product<crate::dimension::Length<PInt<N>>, crate::dimension::Length<PInt<N>>>,
+        crate::dimension::SolidAngle<PInt<N>>,
+    >;
 }
 
 /// Phantom [`Domain`] of the area-product measure on a path of `N` vertices: the
@@ -407,8 +446,13 @@ impl<N: Unsigned> Default for AreaProduct<N> {
     }
 }
 
-impl<N: Unsigned> Measure for AreaProduct<N> {
+// Bounded `NonZero` for the same reason as [`PathThroughput`] above.
+impl<N: Unsigned + NonZero> Measure for AreaProduct<N> {
     type Domain = AreaProductDomain<N>;
+    // `Area^N = (L²)^N = L^{2N}` — two length factors with the positive rank
+    // exponent `N` normalize to `L^{2N}`.
+    type Dim =
+        Product<crate::dimension::Length<PInt<N>>, crate::dimension::Length<PInt<N>>>;
 }
 
 /// Append a vertex to a path: `AreaProduct<N> * Area = AreaProduct<N+1>`.
@@ -729,6 +773,31 @@ mod test {
         let p: PDF<f32, AreaProduct<U4>> = PDF::new(2.0);
         let est: Estimate<f32> = f / p;
         assert_eq!(*est, 4.0);
+    }
+
+    // --- #26: ranked path measures carry the rank-powered dimension --------
+
+    /// Compile-time assertion that two dimensions are dimensionally equal.
+    fn assert_same<A: SameDimension<B>, B>() {}
+
+    #[test]
+    fn area_product_dim_is_area_to_the_rank() {
+        use typenum::U3;
+        // `AreaProduct<3> = Area³ = (L²)³ = L⁶`.
+        assert_same::<
+            <AreaProduct<U3> as Measure>::Dim,
+            Product<AreaDim, Product<AreaDim, AreaDim>>,
+        >();
+    }
+
+    #[test]
+    fn path_throughput_dim_is_throughput_to_the_rank() {
+        use typenum::U2;
+        // `PathThroughput<2> = ThroughputMeasure² = (A·σ⊥)² = L⁴·Ω²`.
+        assert_same::<
+            <PathThroughput<U2> as Measure>::Dim,
+            Product<<ThroughputMeasure as Measure>::Dim, <ThroughputMeasure as Measure>::Dim>,
+        >();
     }
 
     #[test]

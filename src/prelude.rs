@@ -13,8 +13,8 @@ pub use crate::color::*;
 // as `dimension::Length<N>` etc. to avoid a glob collision.
 pub use crate::dimension::{
     AreaDim, BsdfDim, Dimension, Dimensionless, DimensionlessDim, IrradianceDim, IsDimensionless,
-    LengthDim, Nil, Normalize, Normalized, PowerDim, Product, RadianceDim, Recip, SameDimension,
-    SolidAngleDim, WavelengthDim,
+    LengthDim, Nil, Normalize, Normalized, PowerDim, Product, RadianceDim, Recip, Reciprocal,
+    SameDimension, SolidAngleDim, WavelengthDim,
 };
 pub use crate::dual::{Dual, SampleField, reciprocal_det_3, reciprocal_gram_det_2};
 pub use crate::misc::*;

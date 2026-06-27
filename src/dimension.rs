@@ -342,6 +342,11 @@ pub trait Normalize {
 /// The canonical form of `D` — `<D as Normalize>::Output`.
 pub type Normalized<D> = <D as Normalize>::Output;
 
+/// The reciprocal of `D` — `<D as Recip>::Output` (every exponent negated). The
+/// type-alias companion to the [`Recip`] trait, so a derived dimension can be
+/// written `Product<Num, Reciprocal<DenomDim>>` (used by `Density`, TODO #26).
+pub type Reciprocal<D> = <D as Recip>::Output;
+
 impl Normalize for Dimensionless {
     type Output = Nil;
 }
