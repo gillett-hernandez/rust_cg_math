@@ -1,7 +1,7 @@
 use std::{
     // marker::PhantomData,
     marker::PhantomData,
-    ops::{Deref, DerefMut},
+    ops::Deref,
 };
 
 use crate::prelude::*;
@@ -28,21 +28,15 @@ impl<T: Field, M: Measure> PDF<T, M> {
             measure: PhantomData,
         }
     }
-}
 
-// deref, to make things easier. don't need to access pdf.0 anymore, just do *pdf
-impl<T: Field, M: Measure> Deref for PDF<T, M> {
-    type Target = T;
+    /// Read the raw density value, dropping the measure tag `M`. This is the
+    /// escape hatch out of the measure type system — every call is a place where
+    /// measure-correctness is *not* being checked (see TODO #30). Prefer the typed
+    /// operations (`Integrand / PDF → Estimate`, `PDF / PDF → T`, `convert`) and
+    /// grep `.raw(` to enumerate the remaining escapes.
     #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.v
-    }
-}
-
-impl<T: Field, M: Measure> DerefMut for PDF<T, M> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.v
+    pub fn raw(self) -> T {
+        self.v
     }
 }
 
@@ -226,7 +220,7 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for Integrand<T, M> {
     type Output = Estimate<T>;
     #[inline(always)]
     fn div(self, pdf: PDF<T, M>) -> Estimate<T> {
-        Estimate::new(self.v / *pdf)
+        Estimate::new(self.v / pdf.raw())
     }
 }
 
@@ -483,12 +477,11 @@ mod test {
     }
 
     #[test]
-    fn pdf_deref_mut_and_mul() {
-        let mut p: PDF<f32, Area> = PDF::new(2.0);
-        *p += 1.0; // DerefMut
-        assert_eq!(*p, 3.0);
+    fn pdf_raw_and_mul() {
+        let p: PDF<f32, Area> = PDF::new(3.0);
+        assert_eq!(p.raw(), 3.0); // raw accessor
         let scaled = p * 4.0; // Mul<T>
-        assert_eq!(*scaled, 12.0);
+        assert_eq!(scaled.raw(), 12.0);
     }
 
     #[test]
@@ -513,7 +506,7 @@ mod test {
         // dσ⊥ → dσ multiplies by |cosθ| (the reverse of solid→projected).
         let p_psa: PDF<f32, ProjectedSolidAngle> = PDF::new(4.0);
         let p_sa: PDF<f32, SA> = p_psa.convert(DirectionalGeom { cos_theta: 0.25 });
-        assert!((*p_sa - 1.0).abs() < 1e-6, "got {}", *p_sa);
+        assert!((p_sa.raw() - 1.0).abs() < 1e-6, "got {}", p_sa.raw());
     }
 
     #[test]
@@ -524,17 +517,17 @@ mod test {
         let to_psa = p_sa.convert_to_projected_solid_angle(0.5f32);
         let expect_psa: PDF<f32, ProjectedSolidAngle> =
             p_sa.convert(DirectionalGeom { cos_theta: 0.5 });
-        assert!((*to_psa - *expect_psa).abs() < 1e-6);
+        assert!((to_psa.raw() - expect_psa.raw()).abs() < 1e-6);
 
         let p_area: PDF<f32, Area> = PDF::new(0.5);
         let to_sa = p_area.convert_to_solid_angle(0.5f32, 4.0f32);
         let expect_sa: PDF<f32, SA> = p_area.convert(AreaGeom { cos_theta: 0.5, dist_sq: 4.0 });
-        assert!((*to_sa - *expect_sa).abs() < 1e-6);
+        assert!((to_sa.raw() - expect_sa.raw()).abs() < 1e-6);
 
         let to_psa2 = p_area.convert_to_projected_solid_angle(0.5f32, 0.5f32, 4.0f32);
         let expect_psa2: PDF<f32, ProjectedSolidAngle> =
             p_area.convert(EdgeGeom { cos_i: 0.5, cos_o: 0.5, dist_sq: 4.0 });
-        assert!((*to_psa2 - *expect_psa2).abs() < 1e-6);
+        assert!((to_psa2.raw() - expect_psa2.raw()).abs() < 1e-6);
     }
 
     #[test]
@@ -571,7 +564,7 @@ mod test {
             dist_sq: 4.0,
         };
         let p_area: PDF<f32, Area> = p_sa.convert(geom);
-        assert!((*p_area - 0.5 * 0.5 / 4.0).abs() < 1e-6);
+        assert!((p_area.raw() - 0.5 * 0.5 / 4.0).abs() < 1e-6);
     }
 
     #[test]
@@ -584,7 +577,7 @@ mod test {
         };
         let p_sa: PDF<f32, SA> = p_area.convert(geom);
         let back: PDF<f32, Area> = p_sa.convert(geom);
-        assert!((*back - 0.75).abs() < 1e-6);
+        assert!((back.raw() - 0.75).abs() < 1e-6);
     }
 
     #[test]
@@ -593,7 +586,7 @@ mod test {
         let p_sa: PDF<f32, SA> = PDF::new(1.0);
         let p_psa: PDF<f32, ProjectedSolidAngle> =
             p_sa.convert(DirectionalGeom { cos_theta: 0.25 });
-        assert!((*p_psa - 4.0).abs() < 1e-6);
+        assert!((p_psa.raw() - 4.0).abs() < 1e-6);
     }
 
     // -----------------------------------------------------------------------

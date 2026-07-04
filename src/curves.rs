@@ -40,7 +40,7 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (WavelengthEnergy<T, T>, PDF<T, Length>);
+    ) -> (WavelengthEnergy<T, T>, PDF<T, Wavelength>);
 }
 
 #[derive(Debug, Clone)]
@@ -282,11 +282,17 @@ impl Curve {
     pub fn to_cdf(&self, bounds: Bounds1D, resolution: usize) -> CurveWithCDF {
         // resolution is ignored if Curve variant is `Linear`
         match &self {
+            // The analytic linear→CDF path needs at least two samples (it assumes
+            // `signal.len() - 1` intervals for `step_size`). A single-sample Linear curve
+            // (e.g. a `Flat` curve, stored as `signal: vec![strength]`) would divide by
+            // zero → `step_size = ∞` → a CDF of `[0, NaN]`. Fall through to the general
+            // sampling arm below, which evaluates the (constant) curve at `resolution`
+            // points and builds a well-formed uniform CDF.
             Curve::Linear {
                 signal,
                 bounds,
                 mode,
-            } => {
+            } if signal.len() >= 2 => {
                 // converting linear curve to CDF, easy enough since you have the raw signal
                 let mut cdf_signal = signal.clone();
                 let mut s = 0.0;
@@ -318,7 +324,13 @@ impl Curve {
                 let step_size = bounds.span() / (resolution as f32);
                 for i in 0..resolution {
                     let lambda = bounds.lower + (i as f32) * step_size;
-                    s += self.evaluate(lambda);
+                    // Riemann sum of f over wavelength: each rectangle has width `step_size`.
+                    // The `* step_size` is REQUIRED for `pdf_integral` (= s) to be a true
+                    // integral ∫f dλ with units [value·nm]; without it `s = Σf` and the density
+                    // `f / pdf_integral` returned by `sample_power_and_pdf` integrates to
+                    // `step_size`, not 1 (off by Δλ = span/resolution). The analytic Linear arm
+                    // above already multiplies by its step_size; this arm must match.
+                    s += self.evaluate(lambda) * step_size;
                     cdf_signal.push(s);
                 }
 
@@ -556,7 +568,7 @@ impl SpectralPowerDistributionFunction<f32> for Curve {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (SingleWavelength, PDF<f32, Length>) {
+    ) -> (SingleWavelength, PDF<f32, Wavelength>) {
         match &self {
             _ => {
                 let ws = SingleWavelength::new_from_range(sample.x, wavelength_range);
@@ -652,7 +664,7 @@ where
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
+    ) -> (HeroWavelength<R>, PDF<Vector<R>, Wavelength>) {
         let ws = HeroWavelength::<R>::new_from_range(sample.x, wavelength_range);
         (
             ws.replace_energy(self.evaluate_power(ws.lambda)),
@@ -687,7 +699,7 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
         &self,
         wavelength_range: Bounds1D,
         mut sample: Sample1D,
-    ) -> (SingleWavelength, PDF<f32, Length>) {
+    ) -> (SingleWavelength, PDF<f32, Wavelength>) {
         match &self.cdf {
             Curve::Const(v) => (
                 SingleWavelength::new(wavelength_range.sample(sample.x), (*v).into()),
@@ -791,7 +803,7 @@ where
         &self,
         wavelength_range: Bounds1D,
         mut sample: Sample1D,
-    ) -> (HeroWavelength<R>, PDF<Vector<R>, Length>) {
+    ) -> (HeroWavelength<R>, PDF<Vector<R>, Wavelength>) {
         match &self.cdf {
             Curve::Const(v) => (
                 HeroWavelength::<R>::new_from_range(sample.x, wavelength_range)
@@ -1171,7 +1183,7 @@ mod test {
                 Sample1D::new(0.5),
             );
             assert!(we.lambda.extract::<0>() >= BOUNDED_VISIBLE_RANGE.lower);
-            assert_lanes_match_scalar(*pdf, 1.0 / BOUNDED_VISIBLE_RANGE.span(), 1e-6);
+            assert_lanes_match_scalar(pdf.raw(), 1.0 / BOUNDED_VISIBLE_RANGE.span(), 1e-6);
         }
     }
 
@@ -1196,7 +1208,7 @@ mod test {
             Sample1D::new(0.4),
         );
         assert!(sw.lambda >= BOUNDED_VISIBLE_RANGE.lower && sw.lambda <= BOUNDED_VISIBLE_RANGE.upper);
-        assert!(*pdf >= 0.0, "pdf {}", *pdf);
+        assert!(pdf.raw() >= 0.0, "pdf {}", pdf.raw());
     }
 
     #[test]
@@ -1213,7 +1225,7 @@ mod test {
             Sample1D::new(0.5),
         );
         assert_eq!(sw.energy, 0.5);
-        assert!((*pdf - 1.0 / 4.0).abs() < 1e-6);
+        assert!((pdf.raw() - 1.0 / 4.0).abs() < 1e-6);
 
         // `_` fallback arm: cdf is neither Const nor Linear.
         let fallback = CurveWithCDF {
@@ -1248,7 +1260,7 @@ mod test {
             Sample1D::new(0.4),
         );
         assert!(we.lambda.extract::<0>() >= BOUNDED_VISIBLE_RANGE.lower);
-        for lane in (*pdf).into_array() {
+        for lane in pdf.raw().into_array() {
             assert!(lane.is_finite(), "pdf lane {}", lane);
         }
 
@@ -1460,7 +1472,7 @@ mod test {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            s += we.energy / pdf.raw();
         }
         let estimate = s / n as f32;
         assert!(
@@ -1491,8 +1503,89 @@ mod test {
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
             assert!(we.energy.is_finite(), "energy should be finite");
-            assert!(*pdf > 0.0, "pdf should be positive");
+            assert!(pdf.raw() > 0.0, "pdf should be positive");
         }
+    }
+
+    #[test]
+    fn test_cdf_single_sample_flat() {
+        // A `Flat` curve is stored as a single-sample `Linear` curve (`signal: vec![s]`).
+        // `to_cdf` must not divide by `len - 1 == 0` (which produced a `[0, NaN]` CDF and
+        // a NaN panic in `sample_power_and_pdf`). Regression for the LT flat-emitter crash.
+        let curve = Curve::Linear {
+            signal: vec![1.0],
+            bounds: BOUNDED_VISIBLE_RANGE,
+            mode: InterpolationMode::Linear,
+        };
+        let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        assert!(
+            cdf.pdf_integral.is_finite() && cdf.pdf_integral > 0.0,
+            "pdf_integral should be finite/positive for a flat curve: {}",
+            cdf.pdf_integral
+        );
+        if let Curve::Linear { signal, .. } = &cdf.cdf {
+            assert!(
+                signal.iter().all(|v| v.is_finite()),
+                "flat-curve CDF signal must be NaN-free: {:?}",
+                signal
+            );
+        }
+        for _ in 0..200 {
+            let (we, pdf): (_, PDF<f32, _>) =
+                cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
+            assert!(we.energy.is_finite(), "energy should be finite, got {}", we.energy);
+            assert!(we.lambda.is_finite(), "lambda should be finite, got {}", we.lambda);
+            assert!(pdf.raw() > 0.0 && pdf.raw().is_finite(), "pdf should be finite/positive: {:?}", pdf);
+        }
+    }
+
+    #[test]
+    fn test_cdf_sampling_arm_pdf_integral_units() {
+        // Regression: `to_cdf`'s *sampling* arm (taken by non-Linear curves and by
+        // single-sample flat curves) must accumulate a true Riemann integral `Σ f·Δλ`,
+        // not a bare sum `Σ f`. Otherwise `pdf_integral` is off by `Δλ = span/resolution`
+        // and the density `f / pdf_integral` integrates to `Δλ` instead of 1 — which
+        // silently corrupted the LT wavelength reweight (rust_pathtracer task #20).
+        //
+        // Drive the sampling arm with a single-sample flat curve of value 1.0 over a
+        // known span; `∫ 1 dλ = span`, so `pdf_integral` must equal `span` (not
+        // `resolution`), independent of `resolution`.
+        let span = BOUNDED_VISIBLE_RANGE.span();
+        for &resolution in &[10usize, 100, 1000] {
+            let cdf = Curve::Linear {
+                signal: vec![1.0],
+                bounds: BOUNDED_VISIBLE_RANGE,
+                mode: InterpolationMode::Linear,
+            }
+            .to_cdf(BOUNDED_VISIBLE_RANGE, resolution);
+            assert!(
+                (cdf.pdf_integral - span).abs() / span < 1e-3,
+                "flat pdf_integral should equal the span {} (resolution-independent), got {} at resolution {}",
+                span,
+                cdf.pdf_integral,
+                resolution,
+            );
+        }
+
+        // And the returned density must integrate to 1: estimate ∫p dλ by uniform MC.
+        let cdf = Curve::Linear {
+            signal: vec![1.0],
+            bounds: BOUNDED_VISIBLE_RANGE,
+            mode: InterpolationMode::Linear,
+        }
+        .to_cdf(BOUNDED_VISIBLE_RANGE, 100);
+        let n = 4000;
+        let mut s = 0.0;
+        for _ in 0..n {
+            let lambda = BOUNDED_VISIBLE_RANGE.sample(Sample1D::new_random_sample().x);
+            s += cdf.pdf.evaluate(lambda) / cdf.pdf_integral; // p(λ) = f(λ)/pdf_integral
+        }
+        let integral_estimate = s / n as f32 * span; // (1/N)Σ p · span ≈ ∫p dλ
+        assert!(
+            (integral_estimate - 1.0).abs() < 0.05,
+            "sampled density must integrate to ~1, got {}",
+            integral_estimate
+        );
     }
 
     #[test]
@@ -1515,7 +1608,7 @@ mod test {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(narrowed_bounds, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            s += we.energy / pdf.raw();
         }
         let estimate = s / n as f32;
         // estimate should be finite and positive for a positive curve
@@ -1542,7 +1635,7 @@ mod test {
             let (we, pdf): (_, PDF<f32, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            s += we.energy / pdf.raw();
         }
         let estimate = s / n as f32;
         assert!(
@@ -1597,7 +1690,7 @@ mod test {
                 .sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
             assert!(we.energy.is_finite(), "energy should be finite");
-            assert!(*pdf > 0.0, "pdf should be positive");
+            assert!(pdf.raw() > 0.0, "pdf should be positive");
         }
     }
 
@@ -1627,7 +1720,7 @@ mod test {
         for _ in 0..n {
             let sample = Sample1D::new_random_sample();
             let (v, pdf): (_, PDF<f32, _>) = cdf.sample_power_and_pdf(bounds, sample);
-            estimate += v.energy / *pdf / n as f32;
+            estimate += v.energy / pdf.raw() / n as f32;
         }
         assert!(
             (estimate - true_integral).abs() < 0.05,
@@ -1655,7 +1748,7 @@ mod test {
             let (we, pdf): (_, PDF<Vector<TestR>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / *pdf;
+            s += we.energy / pdf.raw();
         }
         println!("{:?}", s);
     }

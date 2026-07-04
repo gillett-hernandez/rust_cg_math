@@ -42,7 +42,7 @@ pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
 /// ```
 #[inline(always)]
 pub fn power_heuristic_pdf<T: Field, M: Measure>(a: PDF<T, M>, b: PDF<T, M>) -> T {
-    let (a, b) = (*a, *b);
+    let (a, b) = (a.raw(), b.raw());
     (a * a) / (a * a + b * b)
 }
 

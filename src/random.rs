@@ -331,7 +331,7 @@ mod tests {
         fn sphere_pdf_is_uniform_solid_angle(s in arb_sample2d()) {
             let (v, p): (V3, PDF<f32, SolidAngle>) = random_on_unit_sphere_pdf(s);
             // pdf is uniform over the sphere: 1/(4π)
-            prop_assert!((*p - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", *p);
+            prop_assert!((p.raw() - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", p.raw());
             // sample agrees with the value-only path
             let v2: V3 = random_on_unit_sphere(s);
             prop_assert!((v - v2).norm() < 1e-5);
@@ -341,7 +341,7 @@ mod tests {
         fn disk_pdf_is_uniform_area(s in arb_sample2d()) {
             let (v, p): (V3, PDF<f32, Area>) = random_in_unit_disk_pdf(s);
             // pdf is uniform over the unit disk: 1/π
-            prop_assert!((*p - 1.0 / PI).abs() < 1e-4, "p={}", *p);
+            prop_assert!((p.raw() - 1.0 / PI).abs() < 1e-4, "p={}", p.raw());
             let v2: V3 = random_in_unit_disk(s);
             prop_assert!((v - v2).norm() < 1e-5);
         }
@@ -351,10 +351,10 @@ mod tests {
             let (v, p): (V3, PDF<f32, SolidAngle>) = random_cosine_direction_pdf(s);
             // solid-angle pdf of cosine-weighted sampling is cosθ/π = z/π
             let expected = v.z() / PI;
-            prop_assert!((*p - expected).abs() < 1e-3, "p={}, expected={}", *p, expected);
+            prop_assert!((p.raw() - expected).abs() < 1e-3, "p={}, expected={}", p.raw(), expected);
             // converting to projected solid angle gives the uniform 1/π
             let p_psa = p.convert(DirectionalGeom { cos_theta: v.z() });
-            prop_assert!((*p_psa - 1.0 / PI).abs() < 1e-3, "p_psa={}", *p_psa);
+            prop_assert!((p_psa.raw() - 1.0 / PI).abs() < 1e-3, "p_psa={}", p_psa.raw());
             let v2: V3 = random_cosine_direction(s);
             prop_assert!((v - v2).norm() < 1e-5);
         }
@@ -370,7 +370,7 @@ mod tests {
             let s = Sample3D::new(x, y, z);
             let (v, p): (V3, PDF<f32, Volume>) = random_in_unit_sphere_pdf(s);
             // uniform over the unit ball: 1 / (4/3 π) = 3/(4π)
-            prop_assert!((*p - 3.0 / (4.0 * PI)).abs() < 2e-3, "p={}", *p);
+            prop_assert!((p.raw() - 3.0 / (4.0 * PI)).abs() < 2e-3, "p={}", p.raw());
             let v2: V3 = random_in_unit_sphere(s);
             prop_assert!((v - v2).norm() < 1e-5);
         }
@@ -382,7 +382,7 @@ mod tests {
             // uniform over the subtended cap: 1 / (2π(1 - cosθ_max))
             let cos_theta_max = (1.0 - radius * radius / dist_sq).sqrt();
             let expected = 1.0 / (2.0 * PI * (1.0 - cos_theta_max));
-            prop_assert!((*p - expected).abs() < 1e-3, "p={}, expected={}", *p, expected);
+            prop_assert!((p.raw() - expected).abs() < 1e-3, "p={}, expected={}", p.raw(), expected);
             let v2: V3 = random_to_sphere(s, radius, dist_sq);
             prop_assert!((v - v2).norm() < 1e-5);
         }
@@ -399,8 +399,8 @@ mod tests {
             let expected = (n + 1.0) / (2.0 * PI) * z.powf(n);
             // relative tolerance: zⁿ varies over a wide dynamic range
             prop_assert!(
-                (*p - expected).abs() <= 1e-3 + 1e-2 * expected,
-                "p={}, expected={}, n={}", *p, expected, n
+                (p.raw() - expected).abs() <= 1e-3 + 1e-2 * expected,
+                "p={}, expected={}, n={}", p.raw(), expected, n
             );
             prop_assert!(z >= 0.0, "lobe should be in the upper hemisphere, z={}", z);
             // unit-length by construction — no .normalized() anywhere
@@ -416,7 +416,7 @@ mod tests {
             // the two uniform dims play swapped roles — so this checks the
             // density form, not sample equality.)
             let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_pdf(s, 1.0);
-            prop_assert!((*p - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", *p, v.z() / PI);
+            prop_assert!((p.raw() - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", p.raw(), v.z() / PI);
         }
 
         #[test]
@@ -431,8 +431,8 @@ mod tests {
             let d = a2 / (PI * denom * denom);
             let expected = d * cos_t;
             prop_assert!(
-                (*p - expected).abs() <= 1e-3 + 1e-2 * expected,
-                "p={}, expected={}, alpha={}", *p, expected, alpha
+                (p.raw() - expected).abs() <= 1e-3 + 1e-2 * expected,
+                "p={}, expected={}, alpha={}", p.raw(), expected, alpha
             );
             prop_assert!((v.norm() - 1.0).abs() < 1e-5, "||v||={}", v.norm());
             let v2: V3 = ggx_direction(s, alpha);
@@ -443,7 +443,7 @@ mod tests {
         fn ggx_alpha1_reduces_to_cosine_density(s in arb_sample2d()) {
             // at α=1, D=1/π so pdf = cosθ/π at the produced direction.
             let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_pdf(s, 1.0);
-            prop_assert!((*p - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", *p, v.z() / PI);
+            prop_assert!((p.raw() - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", p.raw(), v.z() / PI);
         }
     }
 }
