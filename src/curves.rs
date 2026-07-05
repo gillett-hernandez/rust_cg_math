@@ -340,7 +340,12 @@ impl Curve {
                     pdf: self.clone(),
                     cdf: Curve::Linear {
                         signal: cdf_signal,
-                        mode: InterpolationMode::Cubic,
+                        // Linear (not Cubic): the sampler inverts the CDF with linear
+                        // interpolation so that the reported per-nm density is exactly the
+                        // bin slope (see `invert_cdf_linear` / #33). A cubic CDF here would
+                        // desync `cdf.evaluate` (used for the band-edge mass) from that
+                        // linear inversion, and can overshoot monotonicity.
+                        mode: InterpolationMode::Linear,
                         bounds,
                     },
                     pdf_integral: s,
@@ -673,6 +678,58 @@ where
     }
 }
 
+/// Invert a tabulated, piecewise-linear CDF `signal` (values in `[0,1]`, evenly spaced
+/// over `bounds`) at the already-band-remapped `sample_x`, returning the sampled `lambda`
+/// and its sampling density `pdf` (per nm), normalized over the band whose CDF mass is
+/// `cdf_span = cdf(upper) - cdf(lower)`.
+///
+/// λ is drawn with **linear** interpolation inside the containing bin, so it is uniform
+/// across the bin and the sampling density is exactly the bin's constant CDF slope,
+/// `(v1 - v0) / (cdf_span · bin_width)`. Reporting *this* density (rather than the
+/// continuous `pdf.evaluate(λ) / pdf_integral`) is what makes `emission(λ)/pdf` an
+/// unbiased estimator at any tabulation resolution: the old mix of the fine continuous
+/// curve with the coarse discrete CDF over-weighted narrow spectral spikes by the
+/// tabulation error (rust_pathtracer task #33 — a σ=1 nm emitter on 4 nm CDF bins read
+/// ~14 % too bright in LT/BDPT). `pdf = 0` on a zero-mass bin or empty band, which callers
+/// already treat as a zero-radiance sample.
+#[inline]
+fn invert_cdf_linear(
+    signal: &[f32],
+    bounds: Bounds1D,
+    sample_x: f32,
+    cdf_span: f32,
+) -> (f32, f32) {
+    let n = signal.len();
+    let index = match signal
+        .binary_search_by_key(&OrderedFloat::<f32>(sample_x), |&a| OrderedFloat::<f32>(a))
+    {
+        Ok(i) | Err(i) => i,
+    };
+    let bin_width = (bounds.upper - bounds.lower) / n as f32;
+    // bracketing bin [idx-1, idx]; clamp to a valid interior bin.
+    let idx = index.clamp(1, n - 1);
+    let v0 = signal[idx - 1];
+    let v1 = signal[idx];
+    let left = bounds.lower + (idx as f32 - 1.0) * bin_width;
+    let right = bounds.lower + (idx as f32) * bin_width;
+    let lambda = if index == 0 {
+        bounds.lower
+    } else {
+        let t = if v1 != v0 {
+            ((sample_x - v0) / (v1 - v0)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        ((1.0 - t) * left + t * right).clamp(bounds.lower, bounds.upper)
+    };
+    let pdf = if cdf_span > 0.0 && v1 > v0 {
+        (v1 - v0) / (cdf_span * bin_width)
+    } else {
+        0.0
+    };
+    (lambda, pdf)
+}
+
 #[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 #[cfg_attr(feature = "deepsize", derive(DeepSizeOf))]
@@ -708,72 +765,17 @@ impl SpectralPowerDistributionFunction<f32> for CurveWithCDF {
             Curve::Linear {
                 signal,
                 bounds,
-                mode,
+                mode: _,
             } => {
                 let restricted_bounds = bounds.intersection(wavelength_range);
-                // remap sample.x to lie between the values that correspond to restricted_bounds.lower and restricted_bounds.upper
+                // Restrict sampling to the CDF mass inside the requested band: remap the
+                // uniform sample into [lower_cdf, upper_cdf], the CDF values at the band edges.
                 let lower_cdf_value = self.cdf.evaluate(restricted_bounds.lower);
                 let upper_cdf_value = self.cdf.evaluate(restricted_bounds.upper);
-                sample.x = lower_cdf_value + sample.x * (upper_cdf_value - lower_cdf_value);
-                // println!("{:?}", self.cdf);
-                // println!(
-                //     "remapped sample value to be {:?} which is between {:?} and {:?}",
-                //     sample.x, lower_cdf_value, upper_cdf_value
-                // );
-                let maybe_index = signal
-                    .binary_search_by_key(&OrderedFloat::<f32>(sample.x), |&a| {
-                        OrderedFloat::<f32>(a)
-                    });
-                let lambda = match maybe_index {
-                    Ok(index) | Err(index) => {
-                        if index == 0 {
-                            // index is at end, so return lambda that corresponds to index
-                            bounds.lower
-                        } else {
-                            let left = bounds.lower
-                                + (index as f32 - 1.0) * (bounds.upper - bounds.lower)
-                                    / (signal.len() as f32);
-                            let right = bounds.lower
-                                + (index as f32) * (bounds.upper - bounds.lower)
-                                    / (signal.len() as f32);
-                            let v0 = signal[index - 1];
-                            let v1 = signal[index];
-                            let t = if v0 != v1 {
-                                (sample.x - v0) / (v1 - v0)
-                            } else {
-                                0.0
-                            };
-
-                            assert!(0.0 <= t && t <= 1.0, "{}, {}, {}, {}", t, sample.x, v0, v1);
-                            match mode {
-                                InterpolationMode::Linear => (1.0 - t) * left + t * right,
-                                InterpolationMode::Nearest => {
-                                    if t < 0.5 {
-                                        left
-                                    } else {
-                                        right
-                                    }
-                                }
-                                InterpolationMode::Cubic => {
-                                    let t2 = 2.0 * t;
-                                    let one_sub_t = 1.0 - t;
-                                    let h00 = (1.0 + t2) * one_sub_t * one_sub_t;
-                                    let h01 = t * t * (3.0 - t2);
-                                    h00 * left + h01 * right
-                                }
-                            }
-                            .clamp(bounds.lower, bounds.upper)
-                        }
-                    }
-                };
-                // println!("lambda was {}", lambda);
-                let power = self.pdf.evaluate(lambda);
-
-                // println!("power was {}", power);
-                (
-                    SingleWavelength::new(lambda, power.into()),
-                    PDF::from(power / self.pdf_integral),
-                )
+                let cdf_span = upper_cdf_value - lower_cdf_value;
+                sample.x = lower_cdf_value + sample.x * cdf_span;
+                let (lambda, pdf) = invert_cdf_linear(signal, *bounds, sample.x, cdf_span);
+                (SingleWavelength::new(lambda, self.pdf.evaluate(lambda).into()), PDF::from(pdf))
             }
             // should this be self.pdf.sample_power_and_pdf?
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
@@ -813,64 +815,26 @@ where
             Curve::Linear {
                 signal,
                 bounds,
-                mode,
+                mode: _,
             } => {
                 let restricted_bounds = bounds.intersection(wavelength_range);
                 let lower_cdf_value = self.cdf.evaluate(restricted_bounds.lower);
                 let upper_cdf_value = self.cdf.evaluate(restricted_bounds.upper);
-                sample.x = lower_cdf_value + sample.x * (upper_cdf_value - lower_cdf_value);
-                let maybe_index = signal
-                    .binary_search_by_key(&OrderedFloat::<f32>(sample.x), |&a| {
-                        OrderedFloat::<f32>(a)
-                    });
-                let hero_lambda = match maybe_index {
-                    Ok(index) | Err(index) => {
-                        if index == 0 {
-                            bounds.lower
-                        } else {
-                            let left = bounds.lower
-                                + (index as f32 - 1.0) * (bounds.upper - bounds.lower)
-                                    / (signal.len() as f32);
-                            let right = bounds.lower
-                                + (index as f32) * (bounds.upper - bounds.lower)
-                                    / (signal.len() as f32);
-                            let v0 = signal[index - 1];
-                            let v1 = signal[index];
-                            let t = if v0 != v1 {
-                                (sample.x - v0) / (v1 - v0)
-                            } else {
-                                0.0
-                            };
-
-                            assert!(0.0 <= t && t <= 1.0, "{}, {}, {}, {}", t, sample.x, v0, v1);
-                            match mode {
-                                InterpolationMode::Linear => (1.0 - t) * left + t * right,
-                                InterpolationMode::Nearest => {
-                                    if t < 0.5 {
-                                        left
-                                    } else {
-                                        right
-                                    }
-                                }
-                                InterpolationMode::Cubic => {
-                                    let t2 = 2.0 * t;
-                                    let one_sub_t = 1.0 - t;
-                                    let h00 = (1.0 + t2) * one_sub_t * one_sub_t;
-                                    let h01 = t * t * (3.0 - t2);
-                                    h00 * left + h01 * right
-                                }
-                            }
-                            .clamp(bounds.lower, bounds.upper)
-                        }
-                    }
-                };
+                let cdf_span = upper_cdf_value - lower_cdf_value;
+                sample.x = lower_cdf_value + sample.x * cdf_span;
+                // Hero wavelength via the same consistent linear inversion as the scalar
+                // path; `pdf` is the per-nm bin density (see `invert_cdf_linear` / #33). The
+                // stratified secondary lanes still ride the hero density (unchanged HWSS
+                // convention).
+                let (hero_lambda, hero_pdf) =
+                    invert_cdf_linear(signal, *bounds, sample.x, cdf_span);
                 let correlated_sample_x = (hero_lambda - bounds.lower) / bounds.span();
                 let out_we = HeroWavelength::<R>::new_from_range(correlated_sample_x, *bounds);
                 let power: Vector<R> = self.pdf.evaluate_power(out_we.lambda);
 
                 (
                     out_we.replace_energy(power),
-                    Vector::<R>::splat(power.extract::<0>() / self.pdf_integral).into(),
+                    Vector::<R>::splat(hero_pdf).into(),
                 )
             }
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
@@ -1480,6 +1444,47 @@ mod test {
             "CDF estimate {} too far from integral {}",
             estimate,
             true_integral
+        );
+    }
+
+    #[test]
+    fn test_cdf_narrow_spike_density_normalized() {
+        // Regression for task #33 (rust_pathtracer). The density returned by
+        // `sample_power_and_pdf` is the *actual* sampling density, so it must integrate to 1
+        // over the band — otherwise `emission/pdf` is a biased estimator. The old code
+        // returned `pdf.evaluate(λ)/pdf_integral` from the continuous curve while drawing λ
+        // from a coarse discrete CDF; that density integrates to `true_integral/pdf_integral`,
+        // which is `2.5066/2.8607 ≈ 0.876` for a σ=1 nm spike on 4 nm bins — the ~14 % LT/BDPT
+        // over-brightness. The fix (`invert_cdf_linear`, piecewise-constant bin density)
+        // integrates to exactly 1 at any resolution. This is a deterministic (variance-free)
+        // check: sweep sample.x ∈ [0,1] and trapezoid-integrate pdf over the returned λ.
+        let curve = Curve::Exponential {
+            signal: vec![(555.17, 1.0, 1.0, 1.0)],
+        };
+        let cdf: CurveWithCDF = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100); // 4 nm bins
+
+        let n = 400_000;
+        let mut pairs: Vec<(f32, f32)> = Vec::with_capacity(n);
+        for i in 0..n {
+            let u = (i as f32 + 0.5) / n as f32;
+            let (we, pdf): (_, PDF<f32, _>) =
+                cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new(u));
+            pairs.push((we.lambda, pdf.raw()));
+        }
+        pairs.sort_by(|a, b| f32::total_cmp(&a.0, &b.0));
+        // ∫ pdf dλ over the support (pdf ≈ 0 outside the spike, so this equals the band ∫).
+        let mut integral = 0.0f64;
+        for w in pairs.windows(2) {
+            let dl = (w[1].0 - w[0].0) as f64;
+            integral += 0.5 * (w[0].1 + w[1].1) as f64 * dl;
+        }
+        // The true density integrates to exactly 1 (Σ bin masses); the ~3 % slack is the
+        // trapezoid rule crossing the piecewise-constant cell steps. The band [0.94, 1.06]
+        // still excludes the old ~0.876 by a wide margin.
+        assert!(
+            (integral - 1.0).abs() < 0.06,
+            "sampled density integrates to {integral:.4}, must be ~1.0 (#33: the old \
+             continuous-pdf/pdf_integral density integrated to ~0.876 here)",
         );
     }
 
