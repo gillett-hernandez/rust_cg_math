@@ -284,6 +284,8 @@ where
         Transform3::new_from_raw(forward, reverse)
     }
 
+    /// Standard SRT stack: scale is applied first (about the local origin),
+    /// then rotation, then translation — `to_world = T·R·S`.
     #[inline(always)]
     pub fn from_stack(
         scale: Option<Transform3<S>>,
@@ -372,9 +374,12 @@ where
     S::f32x4: LinAlg4Register,
 {
     type Output = Transform3<S>;
+    /// Standard composition: `(a * b).to_world(x) == a.to_world(b.to_world(x))`
+    /// (rhs applied first), matching Matrix4x4 multiplication. The inverse of
+    /// `A·B` is `B⁻¹·A⁻¹`, hence the swapped reverse product.
     #[inline(always)]
     fn mul(self, rhs: Transform3<S>) -> Self::Output {
-        Transform3::new_from_raw(rhs.forward * self.forward, self.reverse * rhs.reverse)
+        Transform3::new_from_raw(self.forward * rhs.forward, rhs.reverse * self.reverse)
     }
 }
 
@@ -495,6 +500,43 @@ mod tests {
             let diff = (a - b).norm();
             prop_assert!(diff < 1e-2, "stack vs manual diff={}", diff);
         }
+    }
+
+    // Pins the composition ORDER, which the round-trip/comparison tests above
+    // cannot see (they compare `from_stack` against the same `t*r*s` product, and
+    // Vec3 probes are translation-blind). `Mul` follows the standard convention
+    // (a*b)(x) = a(b(x)), so `t*r*s` and from_stack(s,r,t) both mean: scale
+    // first, then rotate, then translate (SRT). Point3 probe catches a flipped
+    // Mul: the pre-fix backwards composition gave (0,2,20) here.
+    #[test]
+    fn from_stack_applies_scale_rotate_translate_in_order() {
+        let stacked = T3::from_stack(
+            Some(T3::from_scale(V3::new(2.0, 2.0, 2.0))),
+            Some(T3::from_axis_angle(V3::z_axis(), PI / 2.0)),
+            Some(T3::from_translation(V3::new(0.0, 0.0, 10.0))),
+        );
+        // (1,0,0) --scale 2--> (2,0,0) --rotate z90--> (0,2,0) --translate--> (0,2,10)
+        let p = stacked.to_world(P3::new(1.0, 0.0, 0.0));
+        assert!(
+            (p - P3::new(0.0, 2.0, 10.0)).norm() < 1e-4,
+            "from_stack must be SRT: expected (0,2,10), got {:?}",
+            p
+        );
+        // origin must land exactly at the translation (scale/rotation must not touch it)
+        let c = stacked.to_world(P3::origin());
+        assert!(
+            (c - P3::new(0.0, 0.0, 10.0)).norm() < 1e-4,
+            "origin must map to the translation: got {:?}",
+            c
+        );
+        // standard Mul convention directly: (t * s)(origin) = t(s(origin)) = (0,0,10)
+        let ts = T3::from_translation(V3::new(0.0, 0.0, 10.0)) * T3::from_scale(V3::new(2.0, 2.0, 2.0));
+        let q = ts.to_world(P3::origin());
+        assert!(
+            (q - P3::new(0.0, 0.0, 10.0)).norm() < 1e-4,
+            "(a*b)(x) must equal a(b(x)): got {:?}",
+            q
+        );
     }
 
     #[test]

@@ -166,7 +166,7 @@ where
     group.bench_function("cosine_pdf_dual", |bn| {
         bn.iter(|| {
             let (v, p) = random_cosine_direction_pdf::<S>(black_box(s2));
-            (v, *p)
+            (v, p.raw())
         })
     });
     group.bench_function("cosine_pdf_analytic", |bn| {
@@ -181,7 +181,7 @@ where
     group.bench_function("power_cosine_pdf_dual", |bn| {
         bn.iter(|| {
             let (v, p) = power_cosine_direction_pdf::<S>(black_box(s2), black_box(n_phong));
-            (v, *p)
+            (v, p.raw())
         })
     });
     group.bench_function("power_cosine_pdf_analytic", |bn| {
@@ -196,7 +196,7 @@ where
     group.bench_function("ggx_pdf_dual", |bn| {
         bn.iter(|| {
             let (v, p) = ggx_direction_pdf::<S>(black_box(s2), black_box(alpha_ggx));
-            (v, *p)
+            (v, p.raw())
         })
     });
     group.bench_function("ggx_pdf_analytic", |bn| {
