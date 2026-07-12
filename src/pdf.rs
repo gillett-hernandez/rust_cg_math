@@ -93,6 +93,29 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
     }
 }
 
+/// The joint density of two *independent* coordinates is the product of their
+/// marginal densities: `p_A(x) · p_B(y) = p_{A×B}(x, y)`. Lets a call site
+/// assemble a product-measure density from densities it samples separately —
+/// e.g. `PDF<_, Area> × PDF<_, ProjectedSolidAngle> = PDF<_, ThroughputMeasure>`
+/// (since `ThroughputMeasure = ProductMeasure<Area, ProjectedSolidAngle>`), the
+/// ray-space sampling density a two-stage `⟨W_e, L⟩` measurement (TODO #27)
+/// divides by.
+///
+/// ```
+/// use math::prelude::*;
+/// let p_area: PDF<f32, Area> = PDF::new(2.0);
+/// let p_dir: PDF<f32, ProjectedSolidAngle> = PDF::new(3.0);
+/// let p_ray: PDF<f32, ThroughputMeasure> = p_area * p_dir;
+/// assert_eq!(p_ray.raw(), 6.0);
+/// ```
+impl<T: Field, A: Measure, B: Measure> Mul<PDF<T, B>> for PDF<T, A> {
+    type Output = PDF<T, ProductMeasure<A, B>>;
+    #[inline(always)]
+    fn mul(self, rhs: PDF<T, B>) -> Self::Output {
+        PDF::new(self.v * rhs.v)
+    }
+}
+
 // ===========================================================================
 // Monte Carlo estimation: integrand / pdf, with the measure checked at the type
 // level.
@@ -109,6 +132,14 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
 /// an integrand transforms like the measure element, a density transforms
 /// inversely. Divide by a matching [`PDF`] to form the Monte Carlo estimate.
 ///
+/// `D` is the [`Dimension`] of the integrand *value* `f` itself (e.g. a radiant
+/// intensity integrand carries `Φ`); it defaults to [`Nil`] (the canonical,
+/// normalized empty dimension — not the unnormalized [`Dimensionless`] alias,
+/// since that's what an actually-cancelled computation lands on) so a bare
+/// `Integrand<T, M>` still means "no extra dimension beyond the measure `M`
+/// itself". Dividing by a [`PDF`] combines `D` with the measure's own dimension
+/// (Veach App. 3.B: `dim(f/p) = dim(f) + dim(μ)`) — see [`Estimate`].
+///
 /// The measure tag `M` is checked at compile time: an `Integrand<T, M>` can only
 /// be divided by a `PDF<T, M>` with the *same* `M`. This is the type-level form
 /// of Veach's unbiasedness condition (eq. 8.9) — `f(X)/p(X)` is only a valid
@@ -123,7 +154,9 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
 ///
 /// let f: Integrand<f32, SolidAngle> = Integrand::new(6.0);
 /// let p: PDF<f32, SolidAngle> = PDF::new(2.0);
-/// let est: Estimate<f32> = f / p; // measures match → OK
+/// // `f` carries no extra dimension (D = Nil), so the estimate's dimension is
+/// // just the measure's own: solid angle.
+/// let est: Estimate<f32, Normalized<SolidAngleDim>> = f / p; // measures match → OK
 /// assert_eq!(*est, 3.0);
 /// ```
 ///
@@ -161,22 +194,22 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
 /// let _est = f / p_psa; // ERROR: SolidAngle ≠ ProjectedSolidAngle
 /// ```
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-pub struct Integrand<T: Field, M: Measure> {
+pub struct Integrand<T: Field, M: Measure, D: Dimension = Nil> {
     v: T,
-    measure: PhantomData<fn() -> M>,
+    tags: PhantomData<fn() -> (M, D)>,
 }
 
-impl<T: Field, M: Measure> Integrand<T, M> {
+impl<T: Field, M: Measure, D: Dimension> Integrand<T, M, D> {
     #[inline(always)]
     pub fn new(v: T) -> Self {
         Self {
             v,
-            measure: PhantomData,
+            tags: PhantomData,
         }
     }
 }
 
-impl<T: Field, M: Measure> Deref for Integrand<T, M> {
+impl<T: Field, M: Measure, D: Dimension> Deref for Integrand<T, M, D> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -184,7 +217,7 @@ impl<T: Field, M: Measure> Deref for Integrand<T, M> {
     }
 }
 
-impl<T: Field, M: Measure> From<T> for Integrand<T, M> {
+impl<T: Field, M: Measure, D: Dimension> From<T> for Integrand<T, M, D> {
     #[inline(always)]
     fn from(v: T) -> Self {
         Self::new(v)
@@ -192,22 +225,28 @@ impl<T: Field, M: Measure> From<T> for Integrand<T, M> {
 }
 
 /// The result of a Monte Carlo estimate `f(X) / p(X)` (Veach §8.2). The
-/// integration measure has cancelled, so this value carries no measure tag — it
-/// estimates the measurement `I_j`. This is what a path tracer accumulates into
-/// the framebuffer.
+/// integration measure has cancelled, so this value carries no *measure* tag —
+/// but it retains its physical [`Dimension`] `D` (default [`Nil`], the
+/// canonical empty dimension): `dim(f/p) = dim(f) + dim(μ)` (Veach App. 3.B). A
+/// fully measure-and-dimension-cancelled `Estimate<T>` (`D = Nil`) is what a
+/// path tracer accumulates into the framebuffer.
 #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-pub struct Estimate<T: Field> {
+pub struct Estimate<T: Field, D: Dimension = Nil> {
     v: T,
+    dim: PhantomData<fn() -> D>,
 }
 
-impl<T: Field> Estimate<T> {
+impl<T: Field, D: Dimension> Estimate<T, D> {
     #[inline(always)]
     pub fn new(v: T) -> Self {
-        Self { v }
+        Self {
+            v,
+            dim: PhantomData,
+        }
     }
 }
 
-impl<T: Field> Deref for Estimate<T> {
+impl<T: Field, D: Dimension> Deref for Estimate<T, D> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -216,31 +255,49 @@ impl<T: Field> Deref for Estimate<T> {
 }
 
 /// `f(X) / p(X)` — the measures must match (same `M`) or this will not compile.
-impl<T: Field, M: Measure> Div<PDF<T, M>> for Integrand<T, M> {
-    type Output = Estimate<T>;
+/// The output dimension is `dim(f) + dim(μ)` (Veach App. 3.B), normalized so it
+/// unifies with hand-written `*Dim` aliases (mirrors the `Density` derivation,
+/// TODO #26).
+impl<T: Field, M: Measure, D: Dimension> Div<PDF<T, M>> for Integrand<T, M, D>
+where
+    Product<D, <M as Measure>::Dim>: Normalize,
+    Normalized<Product<D, <M as Measure>::Dim>>: Dimension,
+{
+    type Output = Estimate<T, Normalized<Product<D, <M as Measure>::Dim>>>;
     #[inline(always)]
-    fn div(self, pdf: PDF<T, M>) -> Estimate<T> {
+    fn div(self, pdf: PDF<T, M>) -> Self::Output {
         Estimate::new(self.v / pdf.raw())
     }
 }
 
-impl<T: Field> Add for Estimate<T> {
-    type Output = Self;
+impl<T, D1, D2> Add<Estimate<T, D2>> for Estimate<T, D1>
+where
+    T: Field,
+    D1: Dimension + Normalize,
+    D2: Dimension + SameDimension<D1>,
+    Normalized<D1>: Dimension,
+{
+    type Output = Estimate<T, Normalized<D1>>;
     #[inline(always)]
-    fn add(self, rhs: Self) -> Self {
+    fn add(self, rhs: Estimate<T, D2>) -> Self::Output {
         Estimate::new(self.v + rhs.v)
     }
 }
 
-impl<T: Field> AddAssign for Estimate<T> {
+impl<T, D1, D2> AddAssign<Estimate<T, D2>> for Estimate<T, D1>
+where
+    T: Field,
+    D1: Dimension,
+    D2: Dimension + SameDimension<D1>,
+{
     #[inline(always)]
-    fn add_assign(&mut self, rhs: Self) {
-        self.v += rhs.v;
+    fn add_assign(&mut self, rhs: Estimate<T, D2>) {
+        self.v = self.v + rhs.v;
     }
 }
 
 /// Scale an estimate by a dimensionless weight (e.g. a MIS weight, or 1/N).
-impl<T: Field> Mul<T> for Estimate<T> {
+impl<T: Field, D: Dimension> Mul<T> for Estimate<T, D> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: T) -> Self {
@@ -460,10 +517,12 @@ mod test {
 
     #[test]
     fn estimator_cancels_measure() {
-        // f(X)/p(X): integrand and pdf must share the measure; result is measure-free.
+        // f(X)/p(X): integrand and pdf must share the measure; result is
+        // measure-free. `f` carries no extra dimension (D = Nil), so the
+        // estimate's dimension is exactly the measure's own (Area).
         let f: Integrand<f32, Area> = Integrand::new(6.0);
         let p: PDF<f32, Area> = PDF::new(2.0);
-        let est: Estimate<f32> = f / p;
+        let est: Estimate<f32, Normalized<AreaDim>> = f / p;
         assert_eq!(*est, 3.0);
     }
 
@@ -550,8 +609,10 @@ mod test {
         let p_from_cone: PDF<f32, SolidAngle> = PDF::new(d_cone);
 
         // both share the measure tag, so both divide an integrand of the same tag
-        let _e1: Estimate<f32> = Integrand::<f32, SolidAngle>::new(1.0) / p_from_spherical;
-        let _e2: Estimate<f32> = Integrand::<f32, SolidAngle>::new(1.0) / p_from_cone;
+        let _e1: Estimate<f32, Normalized<SolidAngleDim>> =
+            Integrand::<f32, SolidAngle>::new(1.0) / p_from_spherical;
+        let _e2: Estimate<f32, Normalized<SolidAngleDim>> =
+            Integrand::<f32, SolidAngle>::new(1.0) / p_from_cone;
         assert_eq!(d_cone, 1.0); // cone chart Jacobian is unity
     }
 
@@ -612,7 +673,7 @@ mod test {
         for (_u1, _u2) in stratified_grid(N) {
             // uniform over the hemisphere in solid angle
             let p_sigma: PDF<f32, SA> = PDF::new(1.0 / (2.0 * std::f32::consts::PI));
-            let est: Estimate<f32> = Integrand::<f32, SA>::new(1.0) / p_sigma;
+            let est: Estimate<f32, Normalized<SolidAngleDim>> = Integrand::<f32, SA>::new(1.0) / p_sigma;
             acc += *est;
             count += 1;
         }
@@ -639,7 +700,8 @@ mod test {
             let p_sigma: PDF<f32, SA> = PDF::new(1.0 / (2.0 * std::f32::consts::PI));
             let p_proj: PDF<f32, ProjectedSolidAngle> =
                 p_sigma.convert(DirectionalGeom { cos_theta });
-            let est: Estimate<f32> = Integrand::<f32, ProjectedSolidAngle>::new(1.0) / p_proj;
+            let est: Estimate<f32, Normalized<SolidAngleDim>> =
+                Integrand::<f32, ProjectedSolidAngle>::new(1.0) / p_proj;
             acc += *est;
             count += 1;
         }
@@ -679,7 +741,7 @@ mod test {
                 cos_theta: cos_area,
                 dist_sq,
             });
-            let est: Estimate<f32> = Integrand::<f32, SA>::new(1.0) / p_sigma;
+            let est: Estimate<f32, Normalized<SolidAngleDim>> = Integrand::<f32, SA>::new(1.0) / p_sigma;
             acc += *est;
             count += 1;
         }

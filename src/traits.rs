@@ -118,7 +118,7 @@ impl ChartedMeasure<R> for Length {
 /// use math::prelude::*;
 /// let f: Integrand<f32, Wavelength> = Integrand::new(6.0);
 /// let p: PDF<f32, Wavelength> = PDF::new(2.0);
-/// let est: Estimate<f32> = f / p; // integrate out λ
+/// let est: Estimate<f32, Normalized<WavelengthDim>> = f / p; // integrate out λ
 /// assert_eq!(*est, 3.0);
 /// ```
 ///
@@ -308,6 +308,20 @@ pub type ThroughputMeasure = ProductMeasure<Area, ProjectedSolidAngle>;
 /// `Integrand<_, ThroughputMeasure>`.
 pub type SpectralThroughputMeasure = ProductMeasure<ThroughputMeasure, Wavelength>;
 
+/// Radiant flux `Φ` as a measure over ray space (Veach §4.5/§8.1): the energy
+/// content carried by a set of rays. Radiance is the density `L = dΦ/dμ` against
+/// [`ThroughputMeasure`] `μ` — same domain, so `PowerMeasure` borrows it rather
+/// than defining a new one. Sensor responsivity (importance) `W_e = dS/dΦ`
+/// (Veach eq. 4.19) is a density *against this measure*: [`crate::quantity::Importance`]
+/// is dimensioned `Φ⁻¹` (TODO #27), not `RadianceDim`.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct PowerMeasure;
+
+impl Measure for PowerMeasure {
+    type Domain = <ThroughputMeasure as Measure>::Domain;
+    type Dim = PowerDim;
+}
+
 /// the path throughput measure is the product measure of multiple normal ThroughputMeasure measures, determined by the rank
 #[derive(Debug, Copy, Clone)]
 pub struct PathThroughput<N: Unsigned>(PhantomData<N>);
@@ -423,7 +437,7 @@ impl<N: Unsigned> Domain for AreaProductDomain<N> {}
 /// // a 3-vertex path contribution divided by its 3-vertex area-product pdf
 /// let f: Integrand<f32, AreaProduct<U3>> = Integrand::new(6.0);
 /// let p: PDF<f32, AreaProduct<U3>> = PDF::new(2.0);
-/// let est: Estimate<f32> = f / p; // ranks match → OK
+/// let est: Estimate<f32, Normalized<<AreaProduct<U3> as Measure>::Dim>> = f / p; // ranks match → OK
 /// assert_eq!(*est, 3.0);
 /// ```
 ///
@@ -760,7 +774,7 @@ mod test {
         // cancels matching path ranks into a measure-free Estimate.
         let f: Integrand<f32, PathThroughput<U4>> = Integrand::new(9.0);
         let p: PDF<f32, PathThroughput<U4>> = PDF::new(3.0);
-        let est: Estimate<f32> = f / p;
+        let est: Estimate<f32, Normalized<<PathThroughput<U4> as Measure>::Dim>> = f / p;
         assert_eq!(*est, 3.0);
     }
 
@@ -771,7 +785,7 @@ mod test {
         // measure-free Estimate.
         let f: Integrand<f32, AreaProduct<U4>> = Integrand::new(8.0);
         let p: PDF<f32, AreaProduct<U4>> = PDF::new(2.0);
-        let est: Estimate<f32> = f / p;
+        let est: Estimate<f32, Normalized<<AreaProduct<U4> as Measure>::Dim>> = f / p;
         assert_eq!(*est, 4.0);
     }
 

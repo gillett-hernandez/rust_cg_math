@@ -26,7 +26,8 @@
 //! - `Throughput × Radiance   = Radiance`               (and `Importance`)
 //! - `Radiance + Radiance`                              (accumulate; ditto `Importance`)
 //! - [`BSDF::estimator`] — the bridge to the measure layer: `f·cos/pdf`
-//! - `Importance × Radiance = Estimate`                 (the measurement, Veach §3.7.1)
+//! - `Importance × Radiance = Integrand` then `/ PDF = Estimate` (the two-stage
+//!   measurement, Veach §3.7.1/eq. 4.20 — see the impls near [`MeasurementDensityDim`])
 
 use crate::prelude::*;
 use std::{fmt, marker::PhantomData, ops::Deref};
@@ -241,9 +242,12 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
     }
 
     /// View this value as an [`Integrand`] against its measure `M` — the bridge
-    /// into the Monte Carlo estimator (`Integrand / PDF → Estimate`).
+    /// into the Monte Carlo estimator (`Integrand / PDF → Estimate`). Preserves
+    /// this quantity's dimension `D` onto the integrand (TODO #27): `f`'s
+    /// dimension doesn't vanish just because it's about to be integrated — see
+    /// [`Integrand`]'s `Div<PDF>` for where `D` combines with the measure.
     #[inline(always)]
-    pub fn as_integrand(self) -> Integrand<T, M> {
+    pub fn as_integrand(self) -> Integrand<T, M, D> {
         Integrand::new(self.v)
     }
 }
@@ -395,11 +399,16 @@ pub type Density<T, Num, R, M> =
 /// `Emission`). What a path tracer accumulates.
 pub type Radiance<E> = Density<E, PowerDim, Prime, ThroughputMeasure>;
 
-/// Importance `W_e` — the adjoint of radiance, transported from the sensor in
-/// particle / light tracing (Veach §3.7.3). Same dimension and measure as
-/// [`Radiance`], opposite [`Role`]. (The radiance-normalized `W_e ≡ 1` renderer
-/// convention; a fully sensor-responsivity-faithful `Φ⁻¹` importance is TODO #27.)
-pub type Importance<E> = Density<E, PowerDim, Adjoint, ThroughputMeasure>;
+/// Importance `W_e` — sensor flux responsivity, the adjoint of radiance (Veach
+/// §3.7.3, eq. 4.19: `W_e = dS/dΦ`, a unitless-sensor response `S` per unit
+/// radiant flux `Φ`). Dimension `Φ⁻¹` (TODO #27) — *not* [`Radiance`]'s
+/// dimension, despite both being adjoint/primal partners in the same
+/// measurement: importance is a density against the *energy* measure
+/// [`PowerMeasure`], radiance against [`ThroughputMeasure`]. Pairing the two
+/// (`Importance × Radiance`) is therefore a genuine Radon–Nikodym chain-rule
+/// cancellation, not a same-dimension multiply — see the measurement impls
+/// below.
+pub type Importance<E> = Density<E, Dimensionless, Adjoint, PowerMeasure>;
 
 /// Irradiance `E` (W·m⁻²) — radiance integrated over the projected hemisphere
 /// (Veach §3.4.2). An integrand against area.
@@ -440,25 +449,43 @@ impl<E: Field + FromScalar<f32>> BSDF<E> {
 }
 
 // ---------------------------------------------------------------------------
-// The measurement: pairing importance with radiance integrates the rendering
-// equation's inner product ⟨W_e, L⟩ to a measure-free Estimate (Veach §3.7.1).
-// Only this pairing collapses to a film value — `Radiance + Importance` etc. is
-// rejected, so you cannot form a measurement from two like quantities.
+// The measurement: pairing importance with radiance is a two-stage
+// Radon–Nikodym chain rule (Veach eq. 4.20, §3.7.1), not a same-dimension
+// multiply-and-tag:
+//
+//   stage 1:  (dS/dΦ)·(dΦ/dμ) = dS/dμ         — the energy measure Φ cancels
+//   stage 2:  ∫ (dS/dμ) dμ = S                — the μ-integration (Integrand/PDF)
+//
+// `Importance × Radiance` performs stage 1 only, landing on an `Integrand`
+// against `ThroughputMeasure` (the sensor-response density `dS/dμ`, dimension
+// `Reciprocal<ThroughputMeasure::Dim>` — Φ has cancelled). Stage 2 is the
+// ordinary `Integrand / PDF<_, ThroughputMeasure> -> Estimate` division
+// (`pdf.rs`): dividing by the ray-space sampling density performs the
+// μ-integration, and the dimensions cancel to `Nil` by construction (their
+// product is exactly `ThroughputMeasure::Dim · Reciprocal<ThroughputMeasure::Dim>`).
+// Only this pairing collapses toward a film value — `Radiance + Importance`
+// etc. is still rejected, so a measurement can't be formed from two like
+// quantities.
 // ---------------------------------------------------------------------------
 
+/// Dimension of the stage-1 sensor-response density `dS/dμ` (Veach eq. 4.20):
+/// `Importance::Dim · Radiance::Dim`, which is `Reciprocal<ThroughputMeasure::Dim>`
+/// since the energy measure `Φ` cancels between them.
+pub type MeasurementDensityDim = Normalized<Reciprocal<<ThroughputMeasure as Measure>::Dim>>;
+
 impl<E: Field> Mul<Radiance<E>> for Importance<E> {
-    type Output = Estimate<E>;
+    type Output = Integrand<E, ThroughputMeasure, MeasurementDensityDim>;
     #[inline(always)]
-    fn mul(self, rhs: Radiance<E>) -> Estimate<E> {
-        Estimate::new(*self * *rhs)
+    fn mul(self, rhs: Radiance<E>) -> Self::Output {
+        Integrand::new(*self * *rhs)
     }
 }
 
 impl<E: Field> Mul<Importance<E>> for Radiance<E> {
-    type Output = Estimate<E>;
+    type Output = Integrand<E, ThroughputMeasure, MeasurementDensityDim>;
     #[inline(always)]
-    fn mul(self, rhs: Importance<E>) -> Estimate<E> {
-        Estimate::new(*self * *rhs)
+    fn mul(self, rhs: Importance<E>) -> Self::Output {
+        Integrand::new(*self * *rhs)
     }
 }
 
@@ -562,10 +589,26 @@ mod test {
 
     #[test]
     fn measurement_pairs_importance_and_radiance() {
+        // Two-stage Radon–Nikodym chain rule (Veach eq. 4.20): stage 1 cancels
+        // the energy measure Φ (Importance × Radiance → Integrand), stage 2
+        // integrates against ray space (÷ PDF<_, ThroughputMeasure> → Estimate).
         let we = Importance::new(4.0_f32);
         let l = Radiance::new(0.25_f32);
-        let est: Estimate<f32> = we * l;
+        let ds_dmu = we * l;
+        let p_ray = PDF::<f32, ThroughputMeasure>::new(1.0);
+        let est: Estimate<f32> = ds_dmu / p_ray;
         assert_eq!(*est, 1.0);
+    }
+
+    #[test]
+    fn measurement_dim_identity() {
+        // TODO #27's named verification: Importance::Dim · Radiance::Dim is the
+        // reciprocal of the throughput measure's own dimension (the Φ measure
+        // cancels between the two, Veach eq. 4.19/4.20).
+        assert_same::<
+            Product<Normalized<Product<Dimensionless, Reciprocal<PowerDim>>>, RadianceDim>,
+            Reciprocal<<ThroughputMeasure as Measure>::Dim>,
+        >();
     }
 
     // --- #26: dimension derived from measure (Density) -------------------
@@ -638,6 +681,19 @@ mod test {
 /// use math::prelude::*;
 /// let p: PDF<f32, SolidAngle> = PDF::new(1.0);
 /// let _q: PDF<f32, ProjectedSolidAngle> = p; // ERROR: different measures
+/// ```
+///
+/// Pairing importance with radiance is a two-*stage* Radon–Nikodym chain rule
+/// (TODO #27): stage 1 (`Importance × Radiance`) only cancels the energy
+/// measure `Φ`, landing on an `Integrand` — not yet a film-ready `Estimate`.
+/// Skipping stage 2 (the `÷ PDF<_, ThroughputMeasure>` μ-integration) is
+/// rejected:
+///
+/// ```compile_fail
+/// use math::prelude::*;
+/// let we: Importance<f32> = Importance::new(1.0);
+/// let l: Radiance<f32> = Radiance::new(1.0);
+/// let _m: Estimate<f32> = we * l; // ERROR: `we * l` is an `Integrand`, not an `Estimate`
 /// ```
 #[cfg(doctest)]
 struct CompileFailTests;
