@@ -142,7 +142,7 @@ pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
 /// As [`random_in_unit_sphere`], but also returns the (uniform) volume pdf
 /// (`3/(4π)`) computed automatically from the warp Jacobian.
 #[inline(always)]
-pub fn random_in_unit_sphere_pdf<S: Simd>(r: Sample3D) -> (Vec3<S>, PDF<f32, Volume>) {
+pub fn random_in_unit_sphere_with_pdf<S: Simd>(r: Sample3D) -> (Vec3<S>, PDF<f32, Volume>) {
     let (v, p) = warp_with_pdf_3::<S>(in_unit_sphere_core, r);
     (v, PDF::new(p))
 }
@@ -156,7 +156,7 @@ pub fn random_on_unit_sphere<S: Simd>(r: Sample2D) -> Vec3<S> {
 /// As [`random_on_unit_sphere`], but also returns the (uniform) solid-angle pdf
 /// computed automatically from the warp Jacobian.
 #[inline(always)]
-pub fn random_on_unit_sphere_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+pub fn random_on_unit_sphere_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
     let (v, p) = warp_with_pdf::<S>(on_unit_sphere_core, r);
     (v, PDF::new(p))
 }
@@ -170,7 +170,7 @@ pub fn random_in_unit_disk<S: Simd>(r: Sample2D) -> Vec3<S> {
 /// As [`random_in_unit_disk`], but also returns the (uniform) area pdf computed
 /// automatically from the warp Jacobian.
 #[inline(always)]
-pub fn random_in_unit_disk_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, Area>) {
+pub fn random_in_unit_disk_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, Area>) {
     let (v, p) = warp_with_pdf::<S>(in_unit_disk_core, r);
     (v, PDF::new(p))
 }
@@ -185,7 +185,7 @@ pub fn random_cosine_direction<S: Simd>(r: Sample2D) -> Vec3<S> {
 /// (`cosθ/π`) computed automatically from the warp Jacobian. Convert to a
 /// projected-solid-angle pdf (`1/π`) with `pdf.convert(DirectionalGeom { .. })`.
 #[inline(always)]
-pub fn random_cosine_direction_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+pub fn random_cosine_direction_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, PDF<f32, SolidAngle>) {
     let (v, p) = warp_with_pdf::<S>(cosine_direction_core, r);
     (v, PDF::new(p))
 }
@@ -201,7 +201,10 @@ pub fn power_cosine_direction<S: Simd>(r: Sample2D, n: f32) -> Vec3<S> {
 /// As [`power_cosine_direction`], but also returns the solid-angle pdf
 /// (`(n+1)/(2π)·cosⁿθ`) computed automatically from the warp Jacobian.
 #[inline(always)]
-pub fn power_cosine_direction_pdf<S: Simd>(r: Sample2D, n: f32) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+pub fn power_cosine_direction_with_pdf<S: Simd>(
+    r: Sample2D,
+    n: f32,
+) -> (Vec3<S>, PDF<f32, SolidAngle>) {
     let (v, p) = warp_with_pdf::<S>(|a, b| power_cosine_core(a, b, n), r);
     (v, PDF::new(p))
 }
@@ -217,18 +220,16 @@ pub fn ggx_direction<S: Simd>(r: Sample2D, alpha: f32) -> Vec3<S> {
 /// As [`ggx_direction`], but also returns the solid-angle pdf (`D(θ)·cosθ`)
 /// computed automatically from the warp Jacobian.
 #[inline(always)]
-pub fn ggx_direction_pdf<S: Simd>(r: Sample2D, alpha: f32) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+pub fn ggx_direction_with_pdf<S: Simd>(r: Sample2D, alpha: f32) -> (Vec3<S>, PDF<f32, SolidAngle>) {
     let (v, p) = warp_with_pdf::<S>(|a, b| ggx_core(a, b, alpha), r);
     (v, PDF::new(p))
 }
 
-#[deprecated(
-    note = "Ad-hoc normalize-based lobe with no closed-form pdf and not \
+#[deprecated(note = "Ad-hoc normalize-based lobe with no closed-form pdf and not \
             AD-compatible. Redirects to `power_cosine_direction` with n = \
             weight²; use that (or `_pdf` for the automatic solid-angle pdf). \
             NOTE: this CHANGES the produced distribution to a true cosⁿ lobe — \
-            exact only at weight = 1 (n = 1, the cosine lobe)."
-)]
+            exact only at weight = 1 (n = 1, the cosine lobe).")]
 #[inline(always)]
 pub fn weighted_cosine_direction<S: Simd>(r: Sample2D, weight: f32) -> Vec3<S> {
     power_cosine_direction::<S>(r, weight * weight)
@@ -243,7 +244,7 @@ pub fn random_to_sphere<S: Simd>(r: Sample2D, radius: f32, distance_squared: f32
 /// As [`random_to_sphere`], but also returns the (uniform) solid-angle pdf over
 /// the subtended spherical cap, computed automatically from the warp Jacobian.
 #[inline(always)]
-pub fn random_to_sphere_pdf<S: Simd>(
+pub fn random_to_sphere_with_pdf<S: Simd>(
     r: Sample2D,
     radius: f32,
     distance_squared: f32,
@@ -251,6 +252,40 @@ pub fn random_to_sphere_pdf<S: Simd>(
     let k = radius * radius / distance_squared;
     let (v, p) = warp_with_pdf::<S>(|a, b| to_sphere_core(a, b, k), r);
     (v, PDF::new(p))
+}
+
+/// Closed-form solid-angle pdf of [`random_to_sphere`]: the uniform density over
+/// the subtended spherical cap of half-angle `θ_max`, where `cos θ_max = √(1−k)`
+/// and `k = radius²/distance²`. Derivation: the cap solid angle is
+/// `Ω = 2π(1−cos θ_max)`, and the sampler is uniform over it, so
+/// `p_ω = 1/Ω = 1/(2π(1−√(1−k)))`.
+///
+/// This is the analytic equivalent of the value returned by
+/// [`random_to_sphere_with_pdf`]. Unlike the power-cosine lobe, the cap warp's
+/// Gram determinant is a nonzero constant everywhere on the cap, so this matches
+/// the autodiff result to floating-point precision (no pole singularity). Prefer
+/// it when you only need the density for a direction already known to lie inside
+/// the cap (e.g. MIS weighting), avoiding the dual-number evaluation.
+#[inline(always)]
+pub fn to_sphere_pdf(radius: f32, distance_squared: f32) -> PDF<f32, SolidAngle> {
+    let k = radius * radius / distance_squared;
+    let cos_theta_max = (1.0 - k).sqrt();
+    PDF::new(1.0 / (2.0 * PI * (1.0 - cos_theta_max)))
+}
+
+/// As [`random_to_sphere_with_pdf`], but returns the analytic closed-form pdf
+/// (see [`to_sphere_pdf`]) instead of the autodiff Gram-determinant value. The
+/// direction is generated by the same warp, so the pair is consistent.
+#[inline(always)]
+pub fn random_to_sphere_with_pdf_analytic<S: Simd>(
+    r: Sample2D,
+    radius: f32,
+    distance_squared: f32,
+) -> (Vec3<S>, PDF<f32, SolidAngle>) {
+    (
+        random_to_sphere::<S>(r, radius, distance_squared),
+        to_sphere_pdf(radius, distance_squared),
+    )
 }
 
 #[cfg(test)]
@@ -329,7 +364,7 @@ mod tests {
 
         #[test]
         fn sphere_pdf_is_uniform_solid_angle(s in arb_sample2d()) {
-            let (v, p): (V3, PDF<f32, SolidAngle>) = random_on_unit_sphere_pdf(s);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_on_unit_sphere_with_pdf(s);
             // pdf is uniform over the sphere: 1/(4π)
             prop_assert!((p.raw() - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", p.raw());
             // sample agrees with the value-only path
@@ -339,7 +374,7 @@ mod tests {
 
         #[test]
         fn disk_pdf_is_uniform_area(s in arb_sample2d()) {
-            let (v, p): (V3, PDF<f32, Area>) = random_in_unit_disk_pdf(s);
+            let (v, p): (V3, PDF<f32, Area>) = random_in_unit_disk_with_pdf(s);
             // pdf is uniform over the unit disk: 1/π
             prop_assert!((p.raw() - 1.0 / PI).abs() < 1e-4, "p={}", p.raw());
             let v2: V3 = random_in_unit_disk(s);
@@ -348,7 +383,7 @@ mod tests {
 
         #[test]
         fn cosine_pdf_matches_cos_over_pi(s in arb_sample2d()) {
-            let (v, p): (V3, PDF<f32, SolidAngle>) = random_cosine_direction_pdf(s);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_cosine_direction_with_pdf(s);
             // solid-angle pdf of cosine-weighted sampling is cosθ/π = z/π
             let expected = v.z() / PI;
             prop_assert!((p.raw() - expected).abs() < 1e-3, "p={}, expected={}", p.raw(), expected);
@@ -368,7 +403,7 @@ mod tests {
             x in 0.02f32..0.98, y in 0.05f32..0.95, z in 0.05f32..0.98,
         ) {
             let s = Sample3D::new(x, y, z);
-            let (v, p): (V3, PDF<f32, Volume>) = random_in_unit_sphere_pdf(s);
+            let (v, p): (V3, PDF<f32, Volume>) = random_in_unit_sphere_with_pdf(s);
             // uniform over the unit ball: 1 / (4/3 π) = 3/(4π)
             prop_assert!((p.raw() - 3.0 / (4.0 * PI)).abs() < 2e-3, "p={}", p.raw());
             let v2: V3 = random_in_unit_sphere(s);
@@ -378,7 +413,7 @@ mod tests {
         #[test]
         fn to_sphere_pdf_is_uniform_cap(s in arb_sample2d()) {
             let (radius, dist_sq) = (1.0f32, 4.0f32);
-            let (v, p): (V3, PDF<f32, SolidAngle>) = random_to_sphere_pdf(s, radius, dist_sq);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = random_to_sphere_with_pdf(s, radius, dist_sq);
             // uniform over the subtended cap: 1 / (2π(1 - cosθ_max))
             let cos_theta_max = (1.0 - radius * radius / dist_sq).sqrt();
             let expected = 1.0 / (2.0 * PI * (1.0 - cos_theta_max));
@@ -387,13 +422,35 @@ mod tests {
             prop_assert!((v - v2).norm() < 1e-5);
         }
 
+        // The closed-form `to_sphere_pdf` must reproduce the autodiff Gram-det
+        // value across a range of cap sizes (the cap warp has no pole, so they
+        // agree to f32 precision), and the analytic sampling variant must return
+        // the same direction as the autodiff variant.
+        #[test]
+        fn to_sphere_pdf_analytic_matches_autodiff(
+            s in arb_sample2d(), radius in 0.1f32..3.0, dist_sq in 10.0f32..40.0,
+        ) {
+            let (v_ad, p_ad): (V3, PDF<f32, SolidAngle>) =
+                random_to_sphere_with_pdf(s, radius, dist_sq);
+            let (v_an, p_an): (V3, PDF<f32, SolidAngle>) =
+                random_to_sphere_with_pdf_analytic(s, radius, dist_sq);
+            prop_assert!((v_ad - v_an).norm() < 1e-5, "direction mismatch");
+            let p_direct = to_sphere_pdf(radius, dist_sq);
+            prop_assert!((p_an.raw() - p_direct.raw()).abs() < 1e-6);
+            // relative tolerance: the density spans a wide range over the cap sizes
+            prop_assert!(
+                (p_an.raw() - p_ad.raw()).abs() <= 1e-4 + 1e-3 * p_ad.raw(),
+                "analytic={}, autodiff={}", p_an.raw(), p_ad.raw()
+            );
+        }
+
         // ---- concentration-controllable lobe samplers --------------------
 
         #[test]
         fn power_cosine_pdf_matches_closed_form(
             s in arb_sample2d(), n in 0.0f32..64.0,
         ) {
-            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_pdf(s, n);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_with_pdf(s, n);
             // pdf = (n+1)/(2π) · cosⁿθ  (cosθ = z, the lobe is around +z)
             let z = v.z();
             let expected = (n + 1.0) / (2.0 * PI) * z.powf(n);
@@ -415,7 +472,7 @@ mod tests {
             // (The per-sample bijection differs from random_cosine_direction —
             // the two uniform dims play swapped roles — so this checks the
             // density form, not sample equality.)
-            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_pdf(s, 1.0);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = power_cosine_direction_with_pdf(s, 1.0);
             prop_assert!((p.raw() - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", p.raw(), v.z() / PI);
         }
 
@@ -423,7 +480,7 @@ mod tests {
         fn ggx_pdf_matches_closed_form(
             s in arb_sample2d(), alpha in 0.05f32..1.0,
         ) {
-            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_pdf(s, alpha);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_with_pdf(s, alpha);
             // pdf = D(θ)·cosθ, D = α²/(π((α²-1)cos²θ+1)²)
             let cos_t = v.z();
             let a2 = alpha * alpha;
@@ -442,7 +499,7 @@ mod tests {
         #[test]
         fn ggx_alpha1_reduces_to_cosine_density(s in arb_sample2d()) {
             // at α=1, D=1/π so pdf = cosθ/π at the produced direction.
-            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_pdf(s, 1.0);
+            let (v, p): (V3, PDF<f32, SolidAngle>) = ggx_direction_with_pdf(s, 1.0);
             prop_assert!((p.raw() - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", p.raw(), v.z() / PI);
         }
     }

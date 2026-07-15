@@ -109,7 +109,17 @@ where
         // Vec3 has w=0, so mat4_vec3_product is the appropriate primitive —
         // it skips the translation column and avoids the homogenization step.
         // COLUMN_MAJOR=true because our `self.0` stores columns directly.
-        Vec3(rhs.0.mat4_vec3_product::<true>(&self.0))
+        //
+        // `zero4` is load-bearing, not hygiene. mat4_vec3_product computes
+        // `m[0]*x + m[1]*y + m[2]*z` over the *full 4-lane* columns; it only skips column 3.
+        // Lane 4 of the result is therefore zero only when the matrix's bottom row is
+        // [0,0,0,1]. The inverse-transpose used to transform normals
+        // (`transform.reverse.transpose() * normal`) moves the translation *into* that row, so
+        // the product picks it up as `w = t·v` and `normalized()` — which divides by the 3D
+        // norm — rescales it rather than clearing it. That leaked a w onto every transformed
+        // normal (a camera at look_from=[-5,0,0] gave lens_normal.w = 5.0), which then rode
+        // into `Point3 + Vec3` offsets and produced points with w != 1.
+        Vec3(rhs.0.mat4_vec3_product::<true>(&self.0).zero4())
     }
 }
 

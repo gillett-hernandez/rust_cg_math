@@ -141,17 +141,17 @@ where
         bn.iter(|| power_cosine_direction::<S>(black_box(s2), black_box(n_phong)))
     });
     group.bench_function("power_cosine_direction_pdf", |bn| {
-        bn.iter(|| power_cosine_direction_pdf::<S>(black_box(s2), black_box(n_phong)))
+        bn.iter(|| power_cosine_direction_with_pdf::<S>(black_box(s2), black_box(n_phong)))
     });
     group.bench_function("ggx_direction", |bn| {
         bn.iter(|| ggx_direction::<S>(black_box(s2), black_box(alpha_ggx)))
     });
     group.bench_function("ggx_direction_pdf", |bn| {
-        bn.iter(|| ggx_direction_pdf::<S>(black_box(s2), black_box(alpha_ggx)))
+        bn.iter(|| ggx_direction_with_pdf::<S>(black_box(s2), black_box(alpha_ggx)))
     });
     // Baseline AD overhead reference: the cosine warp value vs. auto-pdf paths.
     group.bench_function("random_cosine_direction_pdf", |bn| {
-        bn.iter(|| random_cosine_direction_pdf::<S>(black_box(s2)))
+        bn.iter(|| random_cosine_direction_with_pdf::<S>(black_box(s2)))
     });
 
     // --- AD auto-pdf vs. hand-written analytic pdf -------------------------
@@ -165,7 +165,7 @@ where
     // cosine-weighted hemisphere — pdf = cosθ/π
     group.bench_function("cosine_pdf_dual", |bn| {
         bn.iter(|| {
-            let (v, p) = random_cosine_direction_pdf::<S>(black_box(s2));
+            let (v, p) = random_cosine_direction_with_pdf::<S>(black_box(s2));
             (v, p.raw())
         })
     });
@@ -180,7 +180,7 @@ where
     // power-cosine (Phong) lobe — pdf = (n+1)/(2π)·cosⁿθ
     group.bench_function("power_cosine_pdf_dual", |bn| {
         bn.iter(|| {
-            let (v, p) = power_cosine_direction_pdf::<S>(black_box(s2), black_box(n_phong));
+            let (v, p) = power_cosine_direction_with_pdf::<S>(black_box(s2), black_box(n_phong));
             (v, p.raw())
         })
     });
@@ -195,7 +195,7 @@ where
     // GGX micronormal — pdf = D(θ)·cosθ
     group.bench_function("ggx_pdf_dual", |bn| {
         bn.iter(|| {
-            let (v, p) = ggx_direction_pdf::<S>(black_box(s2), black_box(alpha_ggx));
+            let (v, p) = ggx_direction_with_pdf::<S>(black_box(s2), black_box(alpha_ggx));
             (v, p.raw())
         })
     });
