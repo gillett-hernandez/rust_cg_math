@@ -422,6 +422,65 @@ mod tests {
         (arb_unit_vec3(), -PI..PI).prop_map(|(axis, angle)| T3::from_axis_angle(axis, angle))
     }
 
+    /// A transformed `Vec3` must keep w == 0, *including* through the inverse-transpose used to
+    /// transform normals.
+    ///
+    /// Regression: `mat4_vec3_product` computes `m[0]*x + m[1]*y + m[2]*z` over the full 4-lane
+    /// columns, skipping only column 3. Lane 4 of the result is zero only when the matrix's
+    /// bottom row is [0,0,0,1] — and `reverse.transpose()` moves the translation *into* that row,
+    /// so the product picked it up as `w = t·v`. `normalized()` divides by the 3D norm, which
+    /// rescaled the bogus w rather than clearing it.
+    ///
+    /// Measured before the fix: translation (5,0,0) with normal (1,0,0) gave w = 5.0 (the
+    /// rust_pathtracer camera at look_from=[-5,0,0]). That rode into `point + normal * offset`,
+    /// producing points with w = 1.005, which tripped a debug_assert in sphere intersection —
+    /// and once that was papered over with `Point3::normalize`, it silently relocated every
+    /// light-tracing shadow-ray origin, so `veach_v` reported occluded on all 1.4M connections
+    /// and light tracing rendered pure black.
+    #[test]
+    fn transformed_normal_keeps_w_zero_through_inverse_transpose() {
+        // the exact configuration from the light-tracing failure
+        let transform = T3::from_translation(V3::new(-5.0, 0.0, 0.0));
+        let normal = V3::new(1.0, 0.0, 0.0);
+
+        let transformed = (transform.reverse.transpose() * normal).normalized();
+        let w = transformed.0.extract::<3>();
+        assert!(
+            w.abs() < 1e-6,
+            "inverse-transpose of a translated frame leaked w = {w} onto a normal; a Vec3 must \
+             always have w = 0 or it corrupts every `Point3 + Vec3` offset downstream"
+        );
+
+        let forward_w = transform.to_world(normal).0.extract::<3>();
+        assert!(
+            forward_w.abs() < 1e-6,
+            "forward transform leaked w = {forward_w} onto a normal"
+        );
+    }
+
+    proptest! {
+        /// The w=0 invariant must survive an arbitrary rotate+translate frame, in both
+        /// directions and through both transposes.
+        #[test]
+        fn transformed_vec3_always_has_w_zero(
+            v in arb_unit_vec3(),
+            shift in arb_vec3(),
+            axis in arb_unit_vec3(),
+            angle in -PI..PI,
+        ) {
+            let transform = T3::from_axis_angle(axis, angle) * T3::from_translation(shift);
+            for out in [
+                transform.to_world(v),
+                transform.to_local(v),
+                (transform.reverse.transpose() * v).normalized(),
+                (transform.forward.transpose() * v).normalized(),
+            ] {
+                let w = out.0.extract::<3>();
+                prop_assert!(w.abs() < 1e-5, "transformed Vec3 gained w = {}", w);
+            }
+        }
+    }
+
     fn arb_translation() -> impl Strategy<Value = T3> {
         arb_vec3().prop_map(|v| T3::from_translation(v))
     }
