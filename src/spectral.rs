@@ -4,11 +4,11 @@ use thermite::math::TranscendentalMath;
 pub const EXTENDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(370.0, 790.0);
 pub const BOUNDED_VISIBLE_RANGE: Bounds1D = Bounds1D::new(380.0, 780.0);
 
-pub type SingleWavelength = WavelengthEnergy<Vector<f32>, Vector<f32>>;
-/// Hero wavelength bundle, parameterized by a thermite f32 float register `R`.
+pub type SingleWavelength = WavelengthEnergy<Vector<f32>>;
+/// Hero wavelength bundle, parameterized by a thermite f32 float vector `V`.
 /// Replaces the old `f32x4`-hardcoded alias — callers pick the width by
-/// choosing `R` (e.g. `<X86V3 as FloatSimd<f32>>::fxN` for native).
-pub type HeroWavelength<V> = WavelengthEnergy<V, V>;
+/// choosing `V` (e.g. `<X86V3 as FloatSimd<f32>>::fxN` for native).
+pub type HeroWavelength<V> = WavelengthEnergy<V>;
 
 #[inline(always)]
 pub fn x_bar(angstroms: f32) -> f32 {
@@ -64,24 +64,23 @@ where
 
 // traits
 
-pub trait WavelengthEnergyTrait<L: Field, E: Field> {
+pub trait WavelengthEnergyTrait<V> {
     #[inline(always)]
-    fn new(lambda: L, energy: E) -> WavelengthEnergy<L, E> {
+    fn new(lambda: V, energy: V) -> WavelengthEnergy<V> {
         WavelengthEnergy { lambda, energy }
     }
-    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<L, E>;
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<V>;
 }
 
-// does a WavelengthEnergy with L != E make any sense?
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct WavelengthEnergy<L: Field, E: Field> {
-    pub lambda: L,
-    pub energy: E,
+#[derive(Copy, Clone, Debug)]
+pub struct WavelengthEnergy<V> {
+    pub lambda: V,
+    pub energy: V,
 }
 
-impl<L: Field, E: Field> WavelengthEnergy<L, E> {
+impl<V> WavelengthEnergy<V> {
     #[inline(always)]
-    pub fn replace_energy(self, e: E) -> Self {
+    pub fn replace_energy(self, e: V) -> Self {
         Self { energy: e, ..self }
     }
 }
@@ -105,10 +104,10 @@ impl<
     V: FloatVector<Element = T> + TranscendentalMath,
     T: FloatElement + From<f32> + Into<f32>,
     S: Simd,
-> From<WavelengthEnergy<V, V>> for XYZColor<S>
+> From<WavelengthEnergy<V>> for XYZColor<S>
 {
     #[inline(always)]
-    fn from(we: WavelengthEnergy<V, V>) -> Self {
+    fn from(we: WavelengthEnergy<V>) -> Self {
         let angstroms = we.lambda * V::splat(10.0.into());
         XYZColor::new(
             (we.energy * x_bar_v(angstroms.into()))
@@ -138,13 +137,13 @@ impl<
 /// spaced wavelengths starting from `bounds.lower + sample * bounds.span()`,
 /// wrapping any past `bounds.upper` back into range. Replaces the old
 /// `f32x4`-hardcoded `new_from_range` and now scales to whatever width `R` is.
-impl<V, T> WavelengthEnergyTrait<V, V> for WavelengthEnergy<V, V>
+impl<V, T> WavelengthEnergyTrait<V> for WavelengthEnergy<V>
 where
     V: FloatVector<Element = T>,
     T: FloatElement + From<f32>, //+ Into<f32>
 {
     #[inline(always)]
-    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<V, V> {
+    fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<V> {
         let lanes = V::LANES as f32;
         let hero = sample * bounds.span();
         let delta = bounds.span() / lanes;
@@ -206,8 +205,9 @@ mod tests {
         fn single_wavelength_new_from_range(sample in 0.001f32..0.999) {
             let bounds = BOUNDED_VISIBLE_RANGE;
             let we = SingleWavelength::new_from_range(sample, bounds);
-            prop_assert!(we.lambda.extract::<0>() >= bounds.lower, "lambda={} < lower={}", we.lambda, bounds.lower);
-            prop_assert!(we.lambda.extract::<0>() <= bounds.upper, "lambda={} > upper={}", we.lambda, bounds.upper);
+            let lambda = we.lambda.extract::<0>();
+            prop_assert!(lambda >= bounds.lower, "lambda={} < lower={}", lambda, bounds.lower);
+            prop_assert!(lambda <= bounds.upper, "lambda={} > upper={}", lambda, bounds.upper);
             prop_assert_eq!(we.energy.extract::<0>(), 0.0);
         }
 
@@ -217,7 +217,7 @@ mod tests {
             // Once Stage 3 lands a default-backend type alias, this can switch.
             type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
             let bounds = BOUNDED_VISIBLE_RANGE;
-            let we = HeroWavelength::<TestR>::new_from_range(sample, bounds);
+            let we = HeroWavelength::<Vector<TestR>>::new_from_range(sample, bounds);
             let arr = we.lambda.into_array();
             for (i, l) in arr.iter().enumerate() {
                 prop_assert!(
@@ -230,7 +230,11 @@ mod tests {
         #[test]
         fn wavelength_energy_to_xyz_positive_energy(lambda in 400.0f32..700.0, energy in 0.0f32..10.0) {
             type TestS = thermite::backend::scalar::Scalar;
-            let we = WavelengthEnergy { lambda, energy };
+            // 1-lane field so the lane-summing XYZ conversion isn't multiplied.
+            let we = WavelengthEnergy {
+                lambda: Vector::<f32>::splat(lambda),
+                energy: Vector::<f32>::splat(energy),
+            };
             let xyz: XYZColor<TestS> = we.into();
             // with positive energy in the visible range, y should be non-negative
             prop_assert!(xyz.y() >= 0.0, "xyz.y={} for lambda={}, energy={}", xyz.y(), lambda, energy);
@@ -266,7 +270,7 @@ mod tests {
             // exercise the V -> XYZColor conversion impl.
             type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
             type TestS = thermite::backend::scalar::Scalar;
-            let we = HeroWavelength::<TestR>::new_from_range(sample, BOUNDED_VISIBLE_RANGE)
+            let we = HeroWavelength::<Vector<TestR>>::new_from_range(sample, BOUNDED_VISIBLE_RANGE)
                 .replace_energy(Vector::<TestR>::splat(energy));
             let xyz: XYZColor<TestS> = we.into();
             prop_assert!(xyz.y() >= 0.0, "summed Y should be non-negative, got {}", xyz.y());

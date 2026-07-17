@@ -1,6 +1,5 @@
 target/
 .vscode/**
 .claude/**
-*.md
 lcov.info
 

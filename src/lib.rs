@@ -51,8 +51,10 @@ mod test {
 
     #[test]
     fn test_thermite() {
-        let v: Vector<Simd::f32x4> = Vector::new([0.1, 1.2, 2.3, 4.1]);
-        v.eq(other)
+        type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
+        let v = Vector::<TestR>::new([0.1, 1.2, 2.3, 4.1]);
+        assert_eq!(v.extract::<0>(), 0.1);
+        assert_eq!(v.extract::<3>(), 4.1);
     }
 
     #[test]

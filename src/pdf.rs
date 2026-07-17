@@ -15,14 +15,18 @@ use crate::prelude::*;
 //
 // `PhantomData<fn() -> M>` (not `*const M`) keeps `PDF: Send + Sync` — important
 // for a threaded path tracer — while remaining invariant in `M`.
-#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-pub struct PDF<T: Field, M: Measure> {
-    v: T,
+#[derive(Copy, Clone, Debug)]
+pub struct PDF<V, M: Measure> {
+    v: V,
     measure: PhantomData<fn() -> M>,
 }
 
-impl<T: Field, M: Measure> PDF<T, M> {
-    pub fn new(v: T) -> Self {
+/// Scalar-valued density: the 1-lane `Vector<f32>` standing in for the old
+/// `PDF<f32, M>`. `f32` is no longer a field type, so scalar call sites use this.
+pub type ScalarPDF<M> = PDF<Vector<f32>, M>;
+
+impl<V, M: Measure> PDF<V, M> {
+    pub fn new(v: V) -> Self {
         Self {
             v,
             measure: PhantomData,
@@ -35,29 +39,43 @@ impl<T: Field, M: Measure> PDF<T, M> {
     /// operations (`Integrand / PDF → Estimate`, `PDF / PDF → T`, `convert`) and
     /// grep `.raw(` to enumerate the remaining escapes.
     #[inline(always)]
-    pub fn raw(self) -> T {
+    pub fn raw(self) -> V {
         self.v
     }
 }
 
+impl<V, T, M: Measure> PDF<V, M>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
+    pub fn new_from(v: f32) -> Self {
+        Self {
+            v: V::splat(v.into()),
+            measure: PhantomData,
+        }
+    }
+}
+
 // impl From (and Into) when Measure can be inferred
-impl<T: Field, M: Measure> From<T> for PDF<T, M> {
-    fn from(v: T) -> Self {
+impl<V, M: Measure> From<V> for PDF<V, M>
+where
+    V: FloatVector,
+    <V as GenericVector>::Element: FloatElement + From<f32>,
+{
+    fn from(v: V) -> Self {
         Self::new(v)
     }
 }
 
-/* impl<T: Field, M: Measure> Add for PDF<T, M> {
+impl<V, T, M: Measure> Mul<V> for PDF<V, M>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     type Output = Self;
     // must be under the same field and measure
-    fn add(self, rhs: Self) -> Self::Output {
-        PDF::new_with_measure(self.v + rhs.v, self.measure.combine(rhs.measure))
-    }
-} */
-impl<T: Field, M: Measure> Mul<T> for PDF<T, M> {
-    type Output = Self;
-    // must be under the same field and measure
-    fn mul(self, rhs: T) -> Self::Output {
+    fn mul(self, rhs: V) -> Self::Output {
         PDF::new(self.v * rhs)
     }
 }
@@ -72,8 +90,8 @@ impl<T: Field, M: Measure> Mul<T> for PDF<T, M> {
 ///
 /// ```
 /// use math::prelude::*;
-/// let p: PDF<f32, Area> = PDF::new(6.0);
-/// let q: PDF<f32, Area> = PDF::new(2.0);
+/// let p: ScalarPDF<Area> = PDF::new_from(6.0);
+/// let q: ScalarPDF<Area> = PDF::new_from(2.0);
 /// let ratio: f32 = p / q; // same measure → bare scalar
 /// assert_eq!(ratio, 3.0);
 /// ```
@@ -81,14 +99,18 @@ impl<T: Field, M: Measure> Mul<T> for PDF<T, M> {
 /// Different measures are rejected:
 /// ```compile_fail
 /// use math::prelude::*;
-/// let p: PDF<f32, Area> = PDF::new(6.0);
-/// let q: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let p: ScalarPDF<Area> = PDF::new_from(6.0);
+/// let q: ScalarPDF<SolidAngle> = PDF::new_from(2.0);
 /// let _ = p / q; // ERROR: no `Div` impl — Area ≠ SolidAngle
 /// ```
-impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
-    type Output = T;
+impl<V, T, M: Measure> Div<PDF<V, M>> for PDF<V, M>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
+    type Output = V;
     #[inline(always)]
-    fn div(self, rhs: PDF<T, M>) -> T {
+    fn div(self, rhs: PDF<V, M>) -> V {
         self.v / rhs.v
     }
 }
@@ -108,10 +130,14 @@ impl<T: Field, M: Measure> Div<PDF<T, M>> for PDF<T, M> {
 /// let p_ray: PDF<f32, ThroughputMeasure> = p_area * p_dir;
 /// assert_eq!(p_ray.raw(), 6.0);
 /// ```
-impl<T: Field, A: Measure, B: Measure> Mul<PDF<T, B>> for PDF<T, A> {
-    type Output = PDF<T, ProductMeasure<A, B>>;
+impl<V, T, A: Measure, B: Measure> Mul<PDF<V, B>> for PDF<V, A>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
+    type Output = PDF<V, ProductMeasure<A, B>>;
     #[inline(always)]
-    fn mul(self, rhs: PDF<T, B>) -> Self::Output {
+    fn mul(self, rhs: PDF<V, B>) -> Self::Output {
         PDF::new(self.v * rhs.v)
     }
 }
@@ -193,15 +219,15 @@ impl<T: Field, A: Measure, B: Measure> Mul<PDF<T, B>> for PDF<T, A> {
 ///     p.convert(DirectionalGeom { cos_theta: 0.5 });
 /// let _est = f / p_psa; // ERROR: SolidAngle ≠ ProjectedSolidAngle
 /// ```
-#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-pub struct Integrand<T: Field, M: Measure, D: Dimension = Nil> {
-    v: T,
+#[derive(Copy, Clone, Debug)]
+pub struct Integrand<V, M: Measure, D: Dimension = Nil> {
+    v: V,
     tags: PhantomData<fn() -> (M, D)>,
 }
 
-impl<T: Field, M: Measure, D: Dimension> Integrand<T, M, D> {
+impl<V, M: Measure, D: Dimension> Integrand<V, M, D> {
     #[inline(always)]
-    pub fn new(v: T) -> Self {
+    pub fn new(v: V) -> Self {
         Self {
             v,
             tags: PhantomData,
@@ -209,17 +235,30 @@ impl<T: Field, M: Measure, D: Dimension> Integrand<T, M, D> {
     }
 }
 
-impl<T: Field, M: Measure, D: Dimension> Deref for Integrand<T, M, D> {
-    type Target = T;
+impl<V, T, M: Measure> Integrand<V, M>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
+    pub fn new_from(v: f32) -> Self {
+        Self {
+            v: V::splat(v.into()),
+            tags: PhantomData,
+        }
+    }
+}
+
+impl<V, M: Measure, D: Dimension> Deref for Integrand<V, M, D> {
+    type Target = V;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.v
     }
 }
 
-impl<T: Field, M: Measure, D: Dimension> From<T> for Integrand<T, M, D> {
+impl<V, M: Measure, D: Dimension> From<V> for Integrand<V, M, D> {
     #[inline(always)]
-    fn from(v: T) -> Self {
+    fn from(v: V) -> Self {
         Self::new(v)
     }
 }
@@ -230,15 +269,15 @@ impl<T: Field, M: Measure, D: Dimension> From<T> for Integrand<T, M, D> {
 /// canonical empty dimension): `dim(f/p) = dim(f) + dim(μ)` (Veach App. 3.B). A
 /// fully measure-and-dimension-cancelled `Estimate<T>` (`D = Nil`) is what a
 /// path tracer accumulates into the framebuffer.
-#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-pub struct Estimate<T: Field, D: Dimension = Nil> {
-    v: T,
+#[derive(Copy, Clone, Debug)]
+pub struct Estimate<V, D: Dimension = Nil> {
+    v: V,
     dim: PhantomData<fn() -> D>,
 }
 
-impl<T: Field, D: Dimension> Estimate<T, D> {
+impl<V, D: Dimension> Estimate<V, D> {
     #[inline(always)]
-    pub fn new(v: T) -> Self {
+    pub fn new(v: V) -> Self {
         Self {
             v,
             dim: PhantomData,
@@ -246,61 +285,85 @@ impl<T: Field, D: Dimension> Estimate<T, D> {
     }
 }
 
-impl<T: Field, D: Dimension> Deref for Estimate<T, D> {
-    type Target = T;
+impl<V, T, D: Dimension> Estimate<V, D>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
+    pub fn new_from(v: f32) -> Self {
+        Self {
+            v: V::splat(v.into()),
+            dim: PhantomData,
+        }
+    }
+}
+
+impl<V, D: Dimension> Deref for Estimate<V, D> {
+    type Target = V;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.v
     }
 }
 
+pub type ScalarIntegrand<M, D> = Integrand<Vector<f32>, M, D>;
+pub type ScalarEstimate<D> = Estimate<Vector<f32>, D>;
+
 /// `f(X) / p(X)` — the measures must match (same `M`) or this will not compile.
 /// The output dimension is `dim(f) + dim(μ)` (Veach App. 3.B), normalized so it
 /// unifies with hand-written `*Dim` aliases (mirrors the `Density` derivation,
 /// TODO #26).
-impl<T: Field, M: Measure, D: Dimension> Div<PDF<T, M>> for Integrand<T, M, D>
+impl<V, T, M: Measure, D: Dimension> Div<PDF<V, M>> for Integrand<V, M, D>
 where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
     Product<D, <M as Measure>::Dim>: Normalize,
     Normalized<Product<D, <M as Measure>::Dim>>: Dimension,
 {
-    type Output = Estimate<T, Normalized<Product<D, <M as Measure>::Dim>>>;
+    type Output = Estimate<V, Normalized<Product<D, <M as Measure>::Dim>>>;
     #[inline(always)]
-    fn div(self, pdf: PDF<T, M>) -> Self::Output {
+    fn div(self, pdf: PDF<V, M>) -> Self::Output {
         Estimate::new(self.v / pdf.raw())
     }
 }
 
-impl<T, D1, D2> Add<Estimate<T, D2>> for Estimate<T, D1>
+impl<V, T, D1, D2> Add<Estimate<V, D2>> for Estimate<V, D1>
 where
-    T: Field,
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
     D1: Dimension + Normalize,
     D2: Dimension + SameDimension<D1>,
     Normalized<D1>: Dimension,
 {
-    type Output = Estimate<T, Normalized<D1>>;
+    type Output = Estimate<V, Normalized<D1>>;
     #[inline(always)]
-    fn add(self, rhs: Estimate<T, D2>) -> Self::Output {
+    fn add(self, rhs: Estimate<V, D2>) -> Self::Output {
         Estimate::new(self.v + rhs.v)
     }
 }
 
-impl<T, D1, D2> AddAssign<Estimate<T, D2>> for Estimate<T, D1>
+impl<V, T, D1, D2> AddAssign<Estimate<V, D2>> for Estimate<V, D1>
 where
-    T: Field,
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
     D1: Dimension,
     D2: Dimension + SameDimension<D1>,
 {
     #[inline(always)]
-    fn add_assign(&mut self, rhs: Estimate<T, D2>) {
+    fn add_assign(&mut self, rhs: Estimate<V, D2>) {
         self.v = self.v + rhs.v;
     }
 }
 
 /// Scale an estimate by a dimensionless weight (e.g. a MIS weight, or 1/N).
-impl<T: Field, D: Dimension> Mul<T> for Estimate<T, D> {
+impl<V, T, D: Dimension> Mul<V> for Estimate<V, D>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     type Output = Self;
     #[inline(always)]
-    fn mul(self, rhs: T) -> Self {
+    fn mul(self, rhs: V) -> Self {
         Estimate::new(self.v * rhs)
     }
 }
@@ -329,12 +392,16 @@ pub trait MeasureConversion<From: Measure, To: Measure> {
     fn jacobian(&self) -> f32;
 }
 
-impl<T: Field + FromScalar<f32>, From: Measure> PDF<T, From> {
+impl<V, T, FromM: Measure> PDF<V, FromM>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     /// Re-express this density with respect to a different measure `To`,
     /// multiplying by the Radon–Nikodym derivative `dFrom/dTo`.
     #[inline(always)]
-    pub fn convert<To: Measure, C: MeasureConversion<From, To>>(self, conv: C) -> PDF<T, To> {
-        PDF::new(self.v * T::from_scalar(conv.jacobian()))
+    pub fn convert<To: Measure, C: MeasureConversion<FromM, To>>(self, conv: C) -> PDF<V, To> {
+        PDF::new(self.v * V::splat(conv.jacobian().into()))
     }
 }
 
@@ -420,7 +487,11 @@ impl MeasureConversion<Area, ProjectedSolidAngle> for EdgeGeom {
 // ---------------------------------------------------------------------------
 
 // special conversions
-impl<T: Field> PDF<T, SolidAngle> {
+impl<V, T> PDF<V, SolidAngle>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos θ| (the measure-element \
                 factor dσ⊥/dσ), but a density converts by dσ/dσ⊥ = 1/|cos θ| (Veach \
@@ -428,20 +499,16 @@ impl<T: Field> PDF<T, SolidAngle> {
                 of the old result — verify the path tracer didn't depend on the old \
                 direction. Use `pdf.convert(DirectionalGeom { cos_theta })` instead."
     )]
-    pub fn convert_to_projected_solid_angle<S: Scalar + ToScalar<f32>>(
-        &self,
-        cos_theta: S,
-    ) -> PDF<T, ProjectedSolidAngle>
-    where
-        T: FromScalar<f32>,
-    {
-        (*self).convert(DirectionalGeom {
-            cos_theta: cos_theta.to_scalar(),
-        })
+    pub fn convert_to_projected_solid_angle(&self, cos_theta: f32) -> PDF<V, ProjectedSolidAngle> {
+        (*self).convert(DirectionalGeom { cos_theta })
     }
 }
 
-impl<T: Field> PDF<T, Area> {
+impl<V, T> PDF<V, Area>
+where
+    V: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos θ| / r² (the measure-element \
                 factor dσ/dA), but a density converts by dA/dσ = r² / |cos θ| (Veach \
@@ -449,22 +516,17 @@ impl<T: Field> PDF<T, Area> {
                 of the old result — verify the path tracer didn't depend on the old \
                 direction. Use `pdf.convert(AreaGeom { cos_theta, dist_sq })` instead."
     )]
-    pub fn convert_to_solid_angle<S: Scalar + ToScalar<f32>>(
+    pub fn convert_to_solid_angle(
         &self,
-        cos_theta: S,
-        distance_squared: S,
-    ) -> PDF<T, SolidAngle>
-    where
-        T: FromScalar<f32>,
-    {
+        cos_theta: f32,
+        distance_squared: f32,
+    ) -> PDF<V, SolidAngle> {
         (*self).convert(AreaGeom {
-            cos_theta: cos_theta.to_scalar(),
-            dist_sq: distance_squared.to_scalar(),
+            cos_theta,
+            dist_sq: distance_squared,
         })
     }
-}
 
-impl<T: Field> PDF<T, Area> {
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos_i · cos_o| / r² (the geometric \
                 term G = dσ⊥/dA), but a density converts by dA/dσ⊥ = r² / |cos_i · cos_o| \
@@ -472,19 +534,16 @@ impl<T: Field> PDF<T, Area> {
                 of the old result — verify the path tracer didn't depend on the old \
                 direction. Use `pdf.convert(EdgeGeom { cos_i, cos_o, dist_sq })` instead."
     )]
-    pub fn convert_to_projected_solid_angle<S: Scalar + ToScalar<f32>>(
+    pub fn convert_to_projected_solid_angle(
         &self,
-        cos_i: S,
-        cos_o: S,
-        distance_squared: S,
-    ) -> PDF<T, ProjectedSolidAngle>
-    where
-        T: FromScalar<f32>,
-    {
+        cos_i: f32,
+        cos_o: f32,
+        distance_squared: f32,
+    ) -> PDF<V, ProjectedSolidAngle> {
         (*self).convert(EdgeGeom {
-            cos_i: cos_i.to_scalar(),
-            cos_o: cos_o.to_scalar(),
-            dist_sq: distance_squared.to_scalar(),
+            cos_i,
+            cos_o,
+            dist_sq: distance_squared,
         })
     }
 }
@@ -502,6 +561,17 @@ mod test {
     use crate::spaces::{DirectionalSector, SphericalCoordinates};
 
     type SA = SolidAngle;
+    type Vf = Vector<f32>;
+
+    /// splat a scalar into the 1-lane field type.
+    fn s(x: f32) -> Vf {
+        Vf::splat(x)
+    }
+    /// read lane 0 back out — `PDF`/`Integrand`/`Estimate` no longer derive
+    /// `PartialEq`, so scalar assertions extract from the 1-lane field.
+    fn e(v: Vf) -> f32 {
+        v.extract::<0>()
+    }
 
     /// Deterministic stratified midpoint grid over `[0,1)²`: `N×N` samples at the
     /// stratum centers. No RNG, so the Monte Carlo tests below are reproducible.
@@ -520,73 +590,79 @@ mod test {
         // f(X)/p(X): integrand and pdf must share the measure; result is
         // measure-free. `f` carries no extra dimension (D = Nil), so the
         // estimate's dimension is exactly the measure's own (Area).
-        let f: Integrand<f32, Area> = Integrand::new(6.0);
-        let p: PDF<f32, Area> = PDF::new(2.0);
-        let est: Estimate<f32, Normalized<AreaDim>> = f / p;
-        assert_eq!(*est, 3.0);
+        let f: Integrand<Vf, Area> = Integrand::new(s(6.0));
+        let p: PDF<Vf, Area> = PDF::new(s(2.0));
+        let est: Estimate<Vf, Normalized<AreaDim>> = f / p;
+        assert_eq!(e(*est), 3.0);
     }
 
     #[test]
     fn same_measure_pdf_ratio_is_scalar() {
         // B2: p / p' over the same measure cancels to a bare dimensionless T.
-        let p: PDF<f32, Area> = PDF::new(6.0);
-        let q: PDF<f32, Area> = PDF::new(2.0);
-        let ratio: f32 = p / q;
-        assert_eq!(ratio, 3.0);
+        let p: PDF<Vf, Area> = PDF::new(s(6.0));
+        let q: PDF<Vf, Area> = PDF::new(s(2.0));
+        let ratio: Vf = p / q;
+        assert_eq!(e(ratio), 3.0);
     }
 
     #[test]
     fn pdf_raw_and_mul() {
-        let p: PDF<f32, Area> = PDF::new(3.0);
-        assert_eq!(p.raw(), 3.0); // raw accessor
-        let scaled = p * 4.0; // Mul<T>
-        assert_eq!(scaled.raw(), 12.0);
+        let p: PDF<Vf, Area> = PDF::new(s(3.0));
+        assert_eq!(e(p.raw()), 3.0); // raw accessor
+        let scaled = p * s(4.0); // Mul<V>
+        assert_eq!(e(scaled.raw()), 12.0);
     }
 
     #[test]
     fn integrand_deref_and_from() {
-        let f: Integrand<f32, Area> = 5.0.into(); // From<T>
-        assert_eq!(*f, 5.0); // Deref
+        let f: Integrand<Vf, Area> = s(5.0).into(); // From<V>
+        assert_eq!(e(*f), 5.0); // Deref
     }
 
     #[test]
     fn estimate_add_and_scale() {
-        let a = Estimate::<f32>::new(2.0);
-        let b = Estimate::<f32>::new(3.0);
-        assert_eq!(*(a + b), 5.0); // Add
+        let a = Estimate::<Vf>::new(s(2.0));
+        let b = Estimate::<Vf>::new(s(3.0));
+        assert_eq!(e(*(a + b)), 5.0); // Add
         let mut acc = a;
         acc += b; // AddAssign
-        assert_eq!(*acc, 5.0);
-        assert_eq!(*(a * 10.0), 20.0); // Mul<T>
+        assert_eq!(e(*acc), 5.0);
+        assert_eq!(e(*(a * s(10.0))), 20.0); // Mul<V>
     }
 
     #[test]
     fn convert_projected_to_solid_angle() {
         // dσ⊥ → dσ multiplies by |cosθ| (the reverse of solid→projected).
-        let p_psa: PDF<f32, ProjectedSolidAngle> = PDF::new(4.0);
-        let p_sa: PDF<f32, SA> = p_psa.convert(DirectionalGeom { cos_theta: 0.25 });
-        assert!((p_sa.raw() - 1.0).abs() < 1e-6, "got {}", p_sa.raw());
+        let p_psa: PDF<Vf, ProjectedSolidAngle> = PDF::new(s(4.0));
+        let p_sa: PDF<Vf, SA> = p_psa.convert(DirectionalGeom { cos_theta: 0.25 });
+        assert!((e(p_sa.raw()) - 1.0).abs() < 1e-6, "got {}", e(p_sa.raw()));
     }
 
     #[test]
     #[allow(deprecated)]
     fn deprecated_conversions_match_convert() {
         // The legacy convert_to_* methods delegate to `convert`; assert they agree.
-        let p_sa: PDF<f32, SA> = PDF::new(0.5);
+        let p_sa: PDF<Vf, SA> = PDF::new(s(0.5));
         let to_psa = p_sa.convert_to_projected_solid_angle(0.5f32);
-        let expect_psa: PDF<f32, ProjectedSolidAngle> =
+        let expect_psa: PDF<Vf, ProjectedSolidAngle> =
             p_sa.convert(DirectionalGeom { cos_theta: 0.5 });
-        assert!((to_psa.raw() - expect_psa.raw()).abs() < 1e-6);
+        assert!((e(to_psa.raw()) - e(expect_psa.raw())).abs() < 1e-6);
 
-        let p_area: PDF<f32, Area> = PDF::new(0.5);
+        let p_area: PDF<Vf, Area> = PDF::new(s(0.5));
         let to_sa = p_area.convert_to_solid_angle(0.5f32, 4.0f32);
-        let expect_sa: PDF<f32, SA> = p_area.convert(AreaGeom { cos_theta: 0.5, dist_sq: 4.0 });
-        assert!((to_sa.raw() - expect_sa.raw()).abs() < 1e-6);
+        let expect_sa: PDF<Vf, SA> = p_area.convert(AreaGeom {
+            cos_theta: 0.5,
+            dist_sq: 4.0,
+        });
+        assert!((e(to_sa.raw()) - e(expect_sa.raw())).abs() < 1e-6);
 
         let to_psa2 = p_area.convert_to_projected_solid_angle(0.5f32, 0.5f32, 4.0f32);
-        let expect_psa2: PDF<f32, ProjectedSolidAngle> =
-            p_area.convert(EdgeGeom { cos_i: 0.5, cos_o: 0.5, dist_sq: 4.0 });
-        assert!((to_psa2.raw() - expect_psa2.raw()).abs() < 1e-6);
+        let expect_psa2: PDF<Vf, ProjectedSolidAngle> = p_area.convert(EdgeGeom {
+            cos_i: 0.5,
+            cos_o: 0.5,
+            dist_sq: 4.0,
+        });
+        assert!((e(to_psa2.raw()) - e(expect_psa2.raw())).abs() < 1e-6);
     }
 
     #[test]
@@ -600,54 +676,55 @@ mod test {
         // `SolidAngle<DirectionalSector>` and this would not compile.)
         let theta = std::f32::consts::FRAC_PI_3;
         let d_spherical =
-            <SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((0.0, theta));
+            <SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((
+                0.0, theta,
+            ));
         let d_cone = <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure([
             0.0, 0.0, 1.0,
         ]);
 
-        let p_from_spherical: PDF<f32, SolidAngle> = PDF::new(d_spherical);
-        let p_from_cone: PDF<f32, SolidAngle> = PDF::new(d_cone);
+        let p_from_spherical: PDF<Vf, SolidAngle> = PDF::new(s(d_spherical));
+        let p_from_cone: PDF<Vf, SolidAngle> = PDF::new(s(d_cone));
 
         // both share the measure tag, so both divide an integrand of the same tag
-        let _e1: Estimate<f32, Normalized<SolidAngleDim>> =
-            Integrand::<f32, SolidAngle>::new(1.0) / p_from_spherical;
-        let _e2: Estimate<f32, Normalized<SolidAngleDim>> =
-            Integrand::<f32, SolidAngle>::new(1.0) / p_from_cone;
+        let _e1: Estimate<Vf, Normalized<SolidAngleDim>> =
+            Integrand::<Vf, SolidAngle>::new(s(1.0)) / p_from_spherical;
+        let _e2: Estimate<Vf, Normalized<SolidAngleDim>> =
+            Integrand::<Vf, SolidAngle>::new(s(1.0)) / p_from_cone;
         assert_eq!(d_cone, 1.0); // cone chart Jacobian is unity
     }
 
     #[test]
     fn convert_solid_angle_to_area_matches_veach() {
         // Veach eq. 8.10: p_area = p_σ · cos/r²
-        let p_sa: PDF<f32, SA> = PDF::new(0.5);
+        let p_sa: PDF<Vf, SA> = PDF::new(s(0.5));
         let geom = AreaGeom {
             cos_theta: 0.5,
             dist_sq: 4.0,
         };
-        let p_area: PDF<f32, Area> = p_sa.convert(geom);
-        assert!((p_area.raw() - 0.5 * 0.5 / 4.0).abs() < 1e-6);
+        let p_area: PDF<Vf, Area> = p_sa.convert(geom);
+        assert!((e(p_area.raw()) - 0.5 * 0.5 / 4.0).abs() < 1e-6);
     }
 
     #[test]
     fn convert_round_trips() {
         // Area → SolidAngle → Area returns the original density.
-        let p_area: PDF<f32, Area> = PDF::new(0.75);
+        let p_area: PDF<Vf, Area> = PDF::new(s(0.75));
         let geom = AreaGeom {
             cos_theta: 0.3,
             dist_sq: 2.5,
         };
-        let p_sa: PDF<f32, SA> = p_area.convert(geom);
-        let back: PDF<f32, Area> = p_sa.convert(geom);
-        assert!((back.raw() - 0.75).abs() < 1e-6);
+        let p_sa: PDF<Vf, SA> = p_area.convert(geom);
+        let back: PDF<Vf, Area> = p_sa.convert(geom);
+        assert!((e(back.raw()) - 0.75).abs() < 1e-6);
     }
 
     #[test]
     fn convert_solid_angle_to_projected_matches_veach() {
         // Veach eq. 8.11: p_σ⊥ = p_σ · 1/cos
-        let p_sa: PDF<f32, SA> = PDF::new(1.0);
-        let p_psa: PDF<f32, ProjectedSolidAngle> =
-            p_sa.convert(DirectionalGeom { cos_theta: 0.25 });
-        assert!((p_psa.raw() - 4.0).abs() < 1e-6);
+        let p_sa: PDF<Vf, SA> = PDF::new(s(1.0));
+        let p_psa: PDF<Vf, ProjectedSolidAngle> = p_sa.convert(DirectionalGeom { cos_theta: 0.25 });
+        assert!((e(p_psa.raw()) - 4.0).abs() < 1e-6);
     }
 
     // -----------------------------------------------------------------------
@@ -672,9 +749,10 @@ mod test {
         let mut count = 0u32;
         for (_u1, _u2) in stratified_grid(N) {
             // uniform over the hemisphere in solid angle
-            let p_sigma: PDF<f32, SA> = PDF::new(1.0 / (2.0 * std::f32::consts::PI));
-            let est: Estimate<f32, Normalized<SolidAngleDim>> = Integrand::<f32, SA>::new(1.0) / p_sigma;
-            acc += *est;
+            let p_sigma: PDF<Vf, SA> = PDF::new(s(1.0 / (2.0 * std::f32::consts::PI)));
+            let est: Estimate<Vf, Normalized<SolidAngleDim>> =
+                Integrand::<Vf, SA>::new(s(1.0)) / p_sigma;
+            acc += e(*est);
             count += 1;
         }
         let mean = acc / count as f32;
@@ -697,12 +775,12 @@ mod test {
         let mut count = 0u32;
         for (u1, _u2) in stratified_grid(N) {
             let cos_theta = u1; // cosθ ~ U(0,1) for uniform-solid-angle sampling
-            let p_sigma: PDF<f32, SA> = PDF::new(1.0 / (2.0 * std::f32::consts::PI));
-            let p_proj: PDF<f32, ProjectedSolidAngle> =
+            let p_sigma: PDF<Vf, SA> = PDF::new(s(1.0 / (2.0 * std::f32::consts::PI)));
+            let p_proj: PDF<Vf, ProjectedSolidAngle> =
                 p_sigma.convert(DirectionalGeom { cos_theta });
-            let est: Estimate<f32, Normalized<SolidAngleDim>> =
-                Integrand::<f32, ProjectedSolidAngle>::new(1.0) / p_proj;
-            acc += *est;
+            let est: Estimate<Vf, Normalized<SolidAngleDim>> =
+                Integrand::<Vf, ProjectedSolidAngle>::new(s(1.0)) / p_proj;
+            acc += e(*est);
             count += 1;
         }
         let mean = acc / count as f32;
@@ -728,7 +806,7 @@ mod test {
         let a = l / 2.0;
         let omega = 4.0 * (a * a / (h * (a * a + a * a + h * h).sqrt())).atan();
 
-        let p_area: PDF<f32, Area> = PDF::new(1.0 / (l * l));
+        let p_area: PDF<Vf, Area> = PDF::new(s(1.0 / (l * l)));
         let mut acc = 0.0f32;
         let mut count = 0u32;
         for (u, v) in stratified_grid(N) {
@@ -737,12 +815,13 @@ mod test {
             let y = -a + l * v;
             let dist_sq = x * x + y * y + h * h;
             let cos_area = h / dist_sq.sqrt(); // |N'·ω| at the light surface
-            let p_sigma: PDF<f32, SA> = p_area.convert(AreaGeom {
+            let p_sigma: PDF<Vf, SA> = p_area.convert(AreaGeom {
                 cos_theta: cos_area,
                 dist_sq,
             });
-            let est: Estimate<f32, Normalized<SolidAngleDim>> = Integrand::<f32, SA>::new(1.0) / p_sigma;
-            acc += *est;
+            let est: Estimate<Vf, Normalized<SolidAngleDim>> =
+                Integrand::<Vf, SA>::new(s(1.0)) / p_sigma;
+            acc += e(*est);
             count += 1;
         }
         let mean = acc / count as f32;
@@ -763,7 +842,7 @@ mod test {
         let h = 1.0f32;
         let a = l / 2.0;
 
-        let p_area: PDF<f32, Area> = PDF::new(1.0 / (l * l));
+        let p_area: PDF<Vf, Area> = PDF::new(s(1.0 / (l * l)));
         let mut acc_edge = 0.0f32;
         let mut acc_chain = 0.0f32;
         let mut count = 0u32;
@@ -775,20 +854,20 @@ mod test {
             // both endpoints' planes are parallel here, so cos_i == cos_o == h/r
             let cos = h / r;
 
-            let p_edge: PDF<f32, ProjectedSolidAngle> = p_area.convert(EdgeGeom {
+            let p_edge: PDF<Vf, ProjectedSolidAngle> = p_area.convert(EdgeGeom {
                 cos_i: cos,
                 cos_o: cos,
                 dist_sq,
             });
-            let p_chain: PDF<f32, ProjectedSolidAngle> = p_area
+            let p_chain: PDF<Vf, ProjectedSolidAngle> = p_area
                 .convert::<SA, _>(AreaGeom {
                     cos_theta: cos,
                     dist_sq,
                 })
                 .convert(DirectionalGeom { cos_theta: cos });
 
-            acc_edge += *(Integrand::<f32, ProjectedSolidAngle>::new(1.0) / p_edge);
-            acc_chain += *(Integrand::<f32, ProjectedSolidAngle>::new(1.0) / p_chain);
+            acc_edge += e(*(Integrand::<Vf, ProjectedSolidAngle>::new(s(1.0)) / p_edge));
+            acc_chain += e(*(Integrand::<Vf, ProjectedSolidAngle>::new(s(1.0)) / p_chain));
             count += 1;
         }
         let mean_edge = acc_edge / count as f32;

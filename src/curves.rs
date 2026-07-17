@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-use crate::spectral::{x_bar, x_bar_v, y_bar, y_bar_v, z_bar, z_bar_v};
+use crate::spectral::{x_bar_v, y_bar_v, z_bar_v};
 
 #[cfg(feature = "deepsize")]
 use deepsize::DeepSizeOf;
@@ -31,7 +31,7 @@ pub enum InterpolationMode {
     Cubic,
 }
 
-pub trait SpectralPowerDistributionFunction<T: Field> {
+pub trait SpectralPowerDistributionFunction<T> {
     // range: [0, infinty)
     fn evaluate_power(&self, lambda: T) -> T;
     // range: [0, 1]
@@ -41,7 +41,7 @@ pub trait SpectralPowerDistributionFunction<T: Field> {
         &self,
         wavelength_range: Bounds1D,
         sample: Sample1D,
-    ) -> (WavelengthEnergy<T, T>, PDF<T, Wavelength>);
+    ) -> (WavelengthEnergy<T>, PDF<T, Wavelength>);
 }
 
 #[derive(Debug, Clone)]
@@ -868,7 +868,7 @@ mod test {
             let curve = Curve::Exponential {
                 signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
             };
-            let val = curve.evaluate_power(lambda);
+            let val = curve.evaluate_power(Vector::<f32>::splat(lambda)).extract::<0>();
             prop_assert!(val >= 0.0, "evaluate_power({})={}", lambda, val);
         }
 
@@ -877,8 +877,8 @@ mod test {
             let curve = Curve::Exponential {
                 signal: vec![(568.0, 46.9, 40.5, 0.821), (530.9, 16.3, 31.1, 0.286)],
             };
-            let val = curve.evaluate_clamped(lambda);
-            prop_assert!(val >= 0.0 && val < 1.0, "evaluate_clamped({})={}", lambda, val);
+            let val = curve.evaluate_clamped(Vector::<f32>::splat(lambda)).extract::<0>();
+            prop_assert!(val >= 0.0 && val <= 1.0, "evaluate_clamped({})={}", lambda, val);
         }
 
         #[test]
@@ -1103,13 +1103,22 @@ mod test {
         let lambda = 550.0f32;
         let v = Vector::<R4>::splat(lambda);
         for c in &curves {
-            let scalar_power = SpectralPowerDistributionFunction::<f32>::evaluate_power(c, lambda);
+            // the scalar reference is the inherent `Curve::evaluate` (the old
+            // `SPDF<f32>` impl was `evaluate(λ).max(0)` / `.clamp(0, 1)`), and the
+            // 1-lane `Vector<f32>` instantiation must agree with the wide one.
+            let scalar_power = c.evaluate(lambda).max(0.0);
+            let one_lane_power =
+                SpectralPowerDistributionFunction::<Vector<f32>>::evaluate_power(
+                    c,
+                    Vector::<f32>::splat(lambda),
+                )
+                .extract::<0>();
             let vec_power = SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_power(c, v);
             let tol = (scalar_power.abs() * 1e-3).max(1e-4);
+            assert!((one_lane_power - scalar_power).abs() <= tol);
             assert_lanes_match_scalar(vec_power, scalar_power, tol);
 
-            let scalar_clamped =
-                SpectralPowerDistributionFunction::<f32>::evaluate_clamped(c, lambda);
+            let scalar_clamped = c.evaluate(lambda).clamp(0.0, 1.0);
             let vec_clamped =
                 SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_clamped(c, v);
             assert_lanes_match_scalar(vec_clamped, scalar_clamped, 1e-4);
@@ -1134,21 +1143,29 @@ mod test {
             mode: InterpolationMode::Linear,
         };
         let cdf = curve.to_cdf(BOUNDED_VISIBLE_RANGE, 100);
-        // evaluate_power / evaluate_clamped delegate to the pdf curve
-        let p = SpectralPowerDistributionFunction::<f32>::evaluate_power(&cdf, 580.0);
+        // evaluate_power / evaluate_clamped delegate to the pdf curve; the
+        // "scalar" path is now the 1-lane Vector<f32> instantiation.
+        let p = SpectralPowerDistributionFunction::<Vector<f32>>::evaluate_power(
+            &cdf,
+            Vector::<f32>::splat(580.0),
+        )
+        .extract::<0>();
         assert!(p >= 0.0, "power {}", p);
-        let pc = SpectralPowerDistributionFunction::<f32>::evaluate_clamped(&cdf, 580.0);
-        assert!((0.0..1.0).contains(&pc), "clamped {}", pc);
+        let pc = SpectralPowerDistributionFunction::<Vector<f32>>::evaluate_clamped(
+            &cdf,
+            Vector::<f32>::splat(580.0),
+        )
+        .extract::<0>();
+        assert!((0.0..=1.0).contains(&pc), "clamped {}", pc);
         // importance-sample: lambda in range, pdf finite and non-negative
-        let (sw, pdf) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+        let (sw, pdf) = SpectralPowerDistributionFunction::<Vector<f32>>::sample_power_and_pdf(
             &cdf,
             BOUNDED_VISIBLE_RANGE,
             Sample1D::new(0.4),
         );
-        assert!(
-            sw.lambda >= BOUNDED_VISIBLE_RANGE.lower && sw.lambda <= BOUNDED_VISIBLE_RANGE.upper
-        );
-        assert!(pdf.raw() >= 0.0, "pdf {}", pdf.raw());
+        let sw_lambda = sw.lambda.extract::<0>();
+        assert!(sw_lambda >= BOUNDED_VISIBLE_RANGE.lower && sw_lambda <= BOUNDED_VISIBLE_RANGE.upper);
+        assert!(pdf.raw().extract::<0>() >= 0.0, "pdf {}", pdf.raw().extract::<0>());
     }
 
     #[test]
@@ -1159,13 +1176,13 @@ mod test {
             cdf: Curve::Const(0.5),
             pdf_integral: 4.0,
         };
-        let (sw, pdf) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+        let (sw, pdf) = SpectralPowerDistributionFunction::<Vector<f32>>::sample_power_and_pdf(
             &const_cdf,
             BOUNDED_VISIBLE_RANGE,
             Sample1D::new(0.5),
         );
-        assert_eq!(sw.energy, 0.5);
-        assert!((pdf.raw() - 1.0 / 4.0).abs() < 1e-6);
+        assert_eq!(sw.energy.extract::<0>(), 0.5);
+        assert!((pdf.raw().extract::<0>() - 1.0 / 4.0).abs() < 1e-6);
 
         // `_` fallback arm: cdf is neither Const nor Linear.
         let fallback = CurveWithCDF {
@@ -1173,12 +1190,12 @@ mod test {
             cdf: Curve::Cauchy { a: 1.0, b: 1.0 },
             pdf_integral: 1.0,
         };
-        let (sw2, _pdf2) = SpectralPowerDistributionFunction::<f32>::sample_power_and_pdf(
+        let (sw2, _pdf2) = SpectralPowerDistributionFunction::<Vector<f32>>::sample_power_and_pdf(
             &fallback,
             BOUNDED_VISIBLE_RANGE,
             Sample1D::new(0.5),
         );
-        assert!(sw2.lambda >= BOUNDED_VISIBLE_RANGE.lower);
+        assert!(sw2.lambda.extract::<0>() >= BOUNDED_VISIBLE_RANGE.lower);
     }
 
     #[test]
@@ -1408,10 +1425,10 @@ mod test {
         let n = 1000;
         let mut s = 0.0;
         for _ in 0..n {
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / pdf.raw();
+            s += (we.energy / pdf.raw()).extract::<0>();
         }
         let estimate = s / n as f32;
         assert!(
@@ -1442,9 +1459,9 @@ mod test {
         let mut pairs: Vec<(f32, f32)> = Vec::with_capacity(n);
         for i in 0..n {
             let u = (i as f32 + 0.5) / n as f32;
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new(u));
-            pairs.push((we.lambda, pdf.raw()));
+            pairs.push((we.lambda.extract::<0>(), pdf.raw().extract::<0>()));
         }
         pairs.sort_by(|a, b| f32::total_cmp(&a.0, &b.0));
         // ∫ pdf dλ over the support (pdf ≈ 0 outside the spike, so this equals the band ∫).
@@ -1479,11 +1496,14 @@ mod test {
 
         // sampling should produce finite, positive energy values
         for _ in 0..100 {
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            assert!(we.energy.is_finite(), "energy should be finite");
-            assert!(pdf.raw() > 0.0, "pdf should be positive");
+            assert!(
+                we.energy.extract::<0>().is_finite(),
+                "energy should be finite"
+            );
+            assert!(pdf.raw().extract::<0>() > 0.0, "pdf should be positive");
         }
     }
 
@@ -1511,20 +1531,15 @@ mod test {
             );
         }
         for _ in 0..200 {
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
+            let energy = we.energy.extract::<0>();
+            let lambda = we.lambda.extract::<0>();
+            let p = pdf.raw().extract::<0>();
+            assert!(energy.is_finite(), "energy should be finite, got {}", energy);
+            assert!(lambda.is_finite(), "lambda should be finite, got {}", lambda);
             assert!(
-                we.energy.is_finite(),
-                "energy should be finite, got {}",
-                we.energy
-            );
-            assert!(
-                we.lambda.is_finite(),
-                "lambda should be finite, got {}",
-                we.lambda
-            );
-            assert!(
-                pdf.raw() > 0.0 && pdf.raw().is_finite(),
+                p > 0.0 && p.is_finite(),
                 "pdf should be finite/positive: {:?}",
                 pdf
             );
@@ -1597,10 +1612,10 @@ mod test {
         let n = 1000;
         let mut s = 0.0;
         for _ in 0..n {
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(narrowed_bounds, Sample1D::new_random_sample());
 
-            s += we.energy / pdf.raw();
+            s += (we.energy / pdf.raw()).extract::<0>();
         }
         let estimate = s / n as f32;
         // estimate should be finite and positive for a positive curve
@@ -1624,10 +1639,10 @@ mod test {
         let n = 1000;
         let mut s = 0.0;
         for _ in 0..n {
-            let (we, pdf): (_, PDF<f32, _>) =
+            let (we, pdf): (_, PDF<Vector<f32>, _>) =
                 cdf.sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            s += we.energy / pdf.raw();
+            s += (we.energy / pdf.raw()).extract::<0>();
         }
         let estimate = s / n as f32;
         assert!(
@@ -1678,11 +1693,14 @@ mod test {
 
         // sampling should produce valid values
         for _ in 0..100 {
-            let (we, pdf): (_, PDF<f32, _>) = combined_cdf
+            let (we, pdf): (_, PDF<Vector<f32>, _>) = combined_cdf
                 .sample_power_and_pdf(BOUNDED_VISIBLE_RANGE, Sample1D::new_random_sample());
 
-            assert!(we.energy.is_finite(), "energy should be finite");
-            assert!(pdf.raw() > 0.0, "pdf should be positive");
+            assert!(
+                we.energy.extract::<0>().is_finite(),
+                "energy should be finite"
+            );
+            assert!(pdf.raw().extract::<0>() > 0.0, "pdf should be positive");
         }
     }
 
@@ -1711,8 +1729,8 @@ mod test {
         let mut estimate = 0.0;
         for _ in 0..n {
             let sample = Sample1D::new_random_sample();
-            let (v, pdf): (_, PDF<f32, _>) = cdf.sample_power_and_pdf(bounds, sample);
-            estimate += v.energy / pdf.raw() / n as f32;
+            let (v, pdf): (_, PDF<Vector<f32>, _>) = cdf.sample_power_and_pdf(bounds, sample);
+            estimate += (v.energy / pdf.raw()).extract::<0>() / n as f32;
         }
         assert!(
             (estimate - true_integral).abs() < 0.05,

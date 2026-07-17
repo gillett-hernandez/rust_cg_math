@@ -1,7 +1,6 @@
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul};
 
 use thermite::Vector;
-use thermite::register::Register;
 use thermite::simd::Simd;
 use thermite::vector::{GenericVector, NumericVector};
 

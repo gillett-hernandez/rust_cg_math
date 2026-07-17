@@ -53,8 +53,8 @@ pub fn hero_power_heuristic<V: FloatVector + TranscendentalMath<Element = T>, T:
 ///
 /// ```
 /// use math::prelude::*;
-/// let a: PDF<f32, Area> = PDF::new(3.0);
-/// let b: PDF<f32, Area> = PDF::new(4.0);
+/// let a: ScalarPDF<Area> = ScalarPDF::new(3.0);
+/// let b: ScalarPDF<Area> = ScalarPDF::new(4.0);
 /// let w = power_heuristic_pdf(a, b); // measures match → OK
 /// assert!((w - 9.0 / 25.0).abs() < 1e-6);
 /// ```
@@ -63,13 +63,13 @@ pub fn hero_power_heuristic<V: FloatVector + TranscendentalMath<Element = T>, T:
 ///
 /// ```compile_fail
 /// use math::prelude::*;
-/// let a: PDF<f32, Area> = PDF::new(3.0);
-/// let b: PDF<f32, SolidAngle> = PDF::new(4.0);
+/// let a: ScalarPDF<Area> = PDF::new(3.0);
+/// let b: ScalarPDF<SolidAngle> = PDF::new(4.0);
 /// let _w = power_heuristic_pdf(a, b); // ERROR: Area ≠ SolidAngle
 /// ```
 #[inline(always)]
 pub fn power_heuristic_pdf<
-    T: TranscendentalMath + FloatVector + GenericVector<Element = f32> + Field,
+    T: TranscendentalMath + FloatVector + GenericVector<Element = f32>,
     M: Measure,
 >(
     a: PDF<T, M>,

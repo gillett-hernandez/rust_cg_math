@@ -38,8 +38,9 @@ use std::{fmt, marker::PhantomData, ops::Deref};
 /// ([`Radiance`], [`Importance`], …) and by the dimension/role/measure-tagged
 /// [`Quantity`] carrier (TODO #23 Slice 3).
 pub trait Measurable: Copy {
-    /// The underlying energy field type (`f32`, `Vector<R>`, …).
-    type Field: Field;
+    /// The underlying energy field type (a thermite float vector, e.g.
+    /// `Vector<f32>` or `Vector<R>`).
+    type Field;
     /// Read the raw value out of the quantity.
     fn value(self) -> Self::Field;
 }
@@ -78,10 +79,10 @@ impl Role for Adjoint {
 macro_rules! quantity {
     ($(#[$m:meta])* $name:ident) => {
         $(#[$m])*
-        #[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]
-        pub struct $name<E: Field>(pub E);
+        #[derive(Copy, Clone, Debug)]
+        pub struct $name<E>(pub E);
 
-        impl<E: Field> Deref for $name<E> {
+        impl<E> Deref for $name<E> {
             type Target = E;
             #[inline(always)]
             fn deref(&self) -> &E {
@@ -89,7 +90,7 @@ macro_rules! quantity {
             }
         }
 
-        impl<E: Field> Measurable for $name<E> {
+        impl<E: Copy> Measurable for $name<E> {
             type Field = E;
             #[inline(always)]
             fn value(self) -> E {
@@ -117,21 +118,21 @@ quantity!(
 // Throughput: multiplicative, dimensionless.
 // ---------------------------------------------------------------------------
 
-impl<E: Field> Throughput<E> {
+impl<E: FloatVector> Throughput<E> {
     /// The multiplicative identity throughput (a fresh path carries `β = 1`).
     #[inline(always)]
     pub fn one() -> Self {
-        Throughput(E::ONE)
+        Throughput(<E as NumericVector>::ONE)
     }
     /// The zero throughput (a terminated / blocked path).
     #[inline(always)]
     pub fn zero() -> Self {
-        Throughput(E::ZERO)
+        Throughput(<E as NumericVector>::ZERO)
     }
 }
 
 /// Extending a path multiplies throughputs.
-impl<E: Field> Mul for Throughput<E> {
+impl<E: FloatVector> Mul for Throughput<E> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
@@ -139,7 +140,7 @@ impl<E: Field> Mul for Throughput<E> {
     }
 }
 
-impl<E: Field> MulAssign for Throughput<E> {
+impl<E: FloatVector> MulAssign for Throughput<E> {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: Self) {
         self.0 = self.0 * rhs.0;
@@ -147,7 +148,7 @@ impl<E: Field> MulAssign for Throughput<E> {
 }
 
 /// Scale throughput by a dimensionless field factor (e.g. a continuation weight).
-impl<E: Field> Mul<E> for Throughput<E> {
+impl<E: FloatVector> Mul<E> for Throughput<E> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: E) -> Self {
@@ -156,7 +157,7 @@ impl<E: Field> Mul<E> for Throughput<E> {
 }
 
 /// Scale throughput by a dimensionless field factor (e.g. a continuation weight).
-impl<E: Field> MulAssign<E> for Throughput<E> {
+impl<E: FloatVector> MulAssign<E> for Throughput<E> {
     #[inline(always)]
     fn mul_assign(&mut self, rhs: E) {
         self.0 = self.0 * rhs;
@@ -165,7 +166,7 @@ impl<E: Field> MulAssign<E> for Throughput<E> {
 
 /// Divide throughput by a dimensionless field factor (e.g. Russian-roulette
 /// continuation probability).
-impl<E: Field> Div<E> for Throughput<E> {
+impl<E: FloatVector> Div<E> for Throughput<E> {
     type Output = Self;
     #[inline(always)]
     fn div(self, rhs: E) -> Self {
@@ -206,12 +207,12 @@ impl<E: Field> Div<E> for Throughput<E> {
 ///
 /// `PhantomData<fn() -> (D,  M)>` (not `*const _`) keeps the carrier
 /// `Send + Sync` for the threaded renderer while staying invariant in the tags.
-pub struct Quantity<T: Field, D: Dimension, M: Measure> {
+pub struct Quantity<T: FloatVector, D: Dimension, M: Measure> {
     v: T,
     tags: PhantomData<fn() -> (D, M)>,
 }
 
-impl<T: Field, D: Dimension, M: Measure> Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Quantity<T, D, M> {
     /// Wrap a raw field value with the (inferred) dimension/role/measure tags.
     #[inline(always)]
     pub fn new(v: T) -> Self {
@@ -224,7 +225,7 @@ impl<T: Field, D: Dimension, M: Measure> Quantity<T, D, M> {
     /// The additive identity (a zero radiance / importance accumulator).
     #[inline(always)]
     pub fn zero() -> Self {
-        Self::new(T::ZERO)
+        Self::new(<T as NumericVector>::ZERO)
     }
 
     /// Re-tag this value with the canonical (normalized) form of its dimension —
@@ -254,21 +255,21 @@ impl<T: Field, D: Dimension, M: Measure> Quantity<T, D, M> {
 // Manual Clone/Copy/Debug so the tags need not be `Copy`/`Debug` themselves
 // (e.g. the dimension markers don't implement `PartialEq`): the phantom is always
 // `Copy`, and only the value `T` participates.
-impl<T: Field, D: Dimension, M: Measure> Clone for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Clone for Quantity<T, D, M> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T: Field, D: Dimension, M: Measure> Copy for Quantity<T, D, M> {}
+impl<T: FloatVector, D: Dimension, M: Measure> Copy for Quantity<T, D, M> {}
 
-impl<T: Field + fmt::Debug, D: Dimension, M: Measure> fmt::Debug for Quantity<T, D, M> {
+impl<T: FloatVector + fmt::Debug, D: Dimension, M: Measure> fmt::Debug for Quantity<T, D, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Quantity({:?})", self.v)
     }
 }
 
-impl<T: Field, D: Dimension, M: Measure> Deref for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Deref for Quantity<T, D, M> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
@@ -276,14 +277,14 @@ impl<T: Field, D: Dimension, M: Measure> Deref for Quantity<T, D, M> {
     }
 }
 
-impl<T: Field, D: Dimension, M: Measure> From<T> for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> From<T> for Quantity<T, D, M> {
     #[inline(always)]
     fn from(v: T) -> Self {
         Self::new(v)
     }
 }
 
-impl<T: Field, D: Dimension, M: Measure> Measurable for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Measurable for Quantity<T, D, M> {
     type Field = T;
     #[inline(always)]
     fn value(self) -> T {
@@ -293,14 +294,14 @@ impl<T: Field, D: Dimension, M: Measure> Measurable for Quantity<T, D, M> {
 
 /// Scale a tagged quantity by a dimensionless field weight (a MIS weight, `1/N`,
 /// a cosine already folded in elsewhere) — tags unchanged.
-impl<T: Field, D: Dimension, M: Measure> Mul<T> for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Mul<T> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: T) -> Self {
         Quantity::new(self.v * rhs)
     }
 }
-impl<T: Field, D: Dimension, M: Measure> Div<T> for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Div<T> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn div(self, rhs: T) -> Self {
@@ -314,7 +315,7 @@ impl<T: Field, D: Dimension, M: Measure> Div<T> for Quantity<T, D, M> {
 /// rule), so accumulation is a renormalization seam.
 impl<T, D1, D2, M> Add<Quantity<T, D2, M>> for Quantity<T, D1, M>
 where
-    T: Field,
+    T: FloatVector,
     D1: Dimension + Normalize,
     D2: Dimension + SameDimension<D1>,
     Normalized<D1>: Dimension,
@@ -333,7 +334,7 @@ where
 /// mutates the value in place, so the type cannot change.
 impl<T, D1, D2, M> AddAssign<Quantity<T, D2, M>> for Quantity<T, D1, M>
 where
-    T: Field,
+    T: FloatVector,
     D1: Dimension,
     D2: Dimension + SameDimension<D1>,
     M: Measure,
@@ -351,14 +352,14 @@ where
 // dimensionless/roleless/measureless scalar weight.
 // ---------------------------------------------------------------------------
 
-impl<T: Field, D: Dimension, M: Measure> Mul<Throughput<T>> for Quantity<T, D, M> {
+impl<T: FloatVector, D: Dimension, M: Measure> Mul<Throughput<T>> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Throughput<T>) -> Self {
         Quantity::new(self.v * rhs.0)
     }
 }
-impl<T: Field, D: Dimension, M: Measure> Mul<Quantity<T, D, M>> for Throughput<T> {
+impl<T: FloatVector, D: Dimension, M: Measure> Mul<Quantity<T, D, M>> for Throughput<T> {
     type Output = Quantity<T, D, M>;
     #[inline(always)]
     fn mul(self, rhs: Quantity<T, D, M>) -> Quantity<T, D, M> {
@@ -423,7 +424,11 @@ pub type Irradiance<E> = Density<E, PowerDim, Area>;
 /// to get a dimensionless [`Throughput`] factor.
 pub type BSDF<E> = Density<E, Dimensionless, ProjectedSolidAngle>;
 
-impl<E: Field + FromScalar<f32>> BSDF<E> {
+impl<E, T> BSDF<E>
+where
+    E: FloatVector<Element = T>,
+    T: FloatElement + From<f32>,
+{
     /// The single-bounce Monte Carlo factor `f · cos θ / pdf`, as a dimensionless
     /// [`Throughput`].
     ///
@@ -470,7 +475,7 @@ impl<E: Field + FromScalar<f32>> BSDF<E> {
 /// since the energy measure `Φ` cancels between them.
 pub type MeasurementDensityDim = Normalized<Reciprocal<<ThroughputMeasure as Measure>::Dim>>;
 
-impl<E: Field> Mul<Radiance<E>> for Importance<E> {
+impl<E: FloatVector> Mul<Radiance<E>> for Importance<E> {
     type Output = Integrand<E, ThroughputMeasure, MeasurementDensityDim>;
     #[inline(always)]
     fn mul(self, rhs: Radiance<E>) -> Self::Output {
@@ -478,7 +483,7 @@ impl<E: Field> Mul<Radiance<E>> for Importance<E> {
     }
 }
 
-impl<E: Field> Mul<Importance<E>> for Radiance<E> {
+impl<E: FloatVector> Mul<Importance<E>> for Radiance<E> {
     type Output = Integrand<E, ThroughputMeasure, MeasurementDensityDim>;
     #[inline(always)]
     fn mul(self, rhs: Importance<E>) -> Self::Output {
@@ -490,6 +495,16 @@ impl<E: Field> Mul<Importance<E>> for Radiance<E> {
 mod test {
     use super::*;
 
+    type Vf = Vector<f32>;
+    /// splat a scalar into the 1-lane field type.
+    fn s(x: f32) -> Vf {
+        Vf::splat(x)
+    }
+    /// read lane 0 back out (the quantity newtypes no longer derive `PartialEq`).
+    fn e(v: Vf) -> f32 {
+        v.extract::<0>()
+    }
+
     // --- the Quantity carrier (Slice 3) ----------------------------------
 
     #[test]
@@ -497,53 +512,52 @@ mod test {
         // Lane-generic over the field: scalar f32 and a SIMD register both work.
         type Lanes = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
         // The tags are phantoms: a tagged quantity is the same size as its field.
-        assert_eq!(std::mem::size_of::<BSDF<f32>>(), std::mem::size_of::<f32>());
+        assert_eq!(
+            std::mem::size_of::<BSDF<Vf>>(),
+            std::mem::size_of::<Vf>()
+        );
         assert_eq!(
             std::mem::size_of::<BSDF<Vector<Lanes>>>(),
             std::mem::size_of::<Vector<Lanes>>()
         );
         // Send + Sync for the threaded renderer.
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<BSDF<f32>>();
+        assert_send_sync::<BSDF<Vf>>();
         assert_send_sync::<BSDF<Vector<Lanes>>>();
     }
 
     #[test]
     fn bsdf_estimator_matches_f_cos_over_pdf() {
         // f·cos/p_σ via the measure-correct bridge.
-        let f = BSDF::<f32>::new(0.5);
-        let pdf: PDF<f32, SolidAngle> = PDF::new(0.25);
+        let f = BSDF::<Vf>::new(s(0.5));
+        let pdf: PDF<Vf, SolidAngle> = PDF::new(s(0.25));
         let beta = f.estimator(0.4, pdf);
         // f·cos/p = 0.5·0.4/0.25 = 0.8
-        assert!((*beta - 0.8).abs() < 1e-6, "got {}", *beta);
+        assert!((e(*beta) - 0.8).abs() < 1e-6, "got {}", e(*beta));
     }
 
     #[test]
     fn carrier_scales_and_derefs() {
-        let f = BSDF::<f32>::new(0.6);
-        assert_eq!(*f, 0.6); // Deref
-        assert_eq!(*(f * 0.5), 0.3); // Mul<T>
-        assert_eq!(*(f / 2.0), 0.3); // Div<T>
-        assert_eq!(f.value(), 0.6); // Measurable
+        let f = BSDF::<Vf>::new(s(0.6));
+        assert_eq!(e(*f), 0.6); // Deref
+        assert_eq!(e(*(f * s(0.5))), 0.3); // Mul<V>
+        assert_eq!(e(*(f / s(2.0))), 0.3); // Div<V>
+        assert_eq!(e(f.value()), 0.6); // Measurable
     }
 
     #[test]
     fn carrier_normalize_is_value_noop() {
         // `normalize()` is a zero-cost retag — value untouched, dimension becomes
         // the canonical form.
-        let f = BSDF::<f32>::new(0.7);
-        let n: Quantity<f32, Normalized<BsdfDim>, Prime, ProjectedSolidAngle> = f.normalize();
-        assert_eq!(*n, 0.7);
+        let f = BSDF::<Vf>::new(s(0.7));
+        let n: Quantity<Vf, Normalized<BsdfDim>, ProjectedSolidAngle> = f.normalize();
+        assert_eq!(e(*n), 0.7);
     }
 
     #[test]
     fn role_duals_are_opposite() {
         // Compile-time: Prime and Adjoint are each other's dual.
-        fn assert_dual<D: Role>()
-        where
-            D: Role<Dual = D>,
-        {
-        }
+        fn assert_dual<D: Role<Dual = E>, E: Role>() {}
         assert_dual::<Prime, Adjoint>();
         assert_dual::<Adjoint, Prime>();
         // Roles are zero-sized phantoms.
@@ -553,35 +567,35 @@ mod test {
 
     #[test]
     fn throughput_extends_and_scales() {
-        let beta = Throughput::<f32>::one() * Throughput(0.5) * Throughput(0.4);
-        assert_eq!(*beta, 0.2);
+        let beta = Throughput::<Vf>::one() * Throughput(s(0.5)) * Throughput(s(0.4));
+        assert_eq!(e(*beta), 0.2);
         // dimensionless field scaling (e.g. RR)
-        assert_eq!(*(Throughput(0.2_f32) / 0.5), 0.4);
+        assert_eq!(e(*(Throughput(s(0.2)) / s(0.5))), 0.4);
     }
 
     #[test]
     fn throughput_carries_radiance() {
-        let l = Radiance::new(2.0_f32);
-        let beta = Throughput(0.25_f32);
+        let l = Radiance::new(s(2.0));
+        let beta = Throughput(s(0.25));
         // both orders work and agree
-        assert_eq!(*(beta * l), 0.5);
-        assert_eq!(*(l * beta), 0.5);
+        assert_eq!(e(*(beta * l)), 0.5);
+        assert_eq!(e(*(l * beta)), 0.5);
     }
 
     #[test]
     fn radiance_accumulates_with_mis_weight() {
-        let mut sum = Radiance::<f32>::zero();
-        sum += Radiance::new(1.0) * 0.75; // MIS weight
-        sum += Radiance::new(2.0) * 0.25;
-        assert_eq!(*sum, 1.25);
+        let mut sum = Radiance::<Vf>::zero();
+        sum += Radiance::new(s(1.0)) * s(0.75); // MIS weight
+        sum += Radiance::new(s(2.0)) * s(0.25);
+        assert_eq!(e(*sum), 1.25);
     }
 
     #[test]
     fn bsdf_estimator_is_f_cos_over_pdf() {
         // f = 0.5 sr^-1, cos = 0.8, p_σ = 0.4 sr^-1  →  0.5 * 0.8 / 0.4 = 1.0
-        let f = BSDF::new(0.5_f32);
-        let beta = f.estimator(0.8, PDF::<f32, SolidAngle>::new(0.4));
-        assert!((*beta - 1.0).abs() < 1e-6, "got {}", *beta);
+        let f = BSDF::new(s(0.5));
+        let beta = f.estimator(0.8, PDF::<Vf, SolidAngle>::new(s(0.4)));
+        assert!((e(*beta) - 1.0).abs() < 1e-6, "got {}", e(*beta));
     }
 
     #[test]
@@ -589,12 +603,12 @@ mod test {
         // Two-stage Radon–Nikodym chain rule (Veach eq. 4.20): stage 1 cancels
         // the energy measure Φ (Importance × Radiance → Integrand), stage 2
         // integrates against ray space (÷ PDF<_, ThroughputMeasure> → Estimate).
-        let we = Importance::new(4.0_f32);
-        let l = Radiance::new(0.25_f32);
+        let we = Importance::new(s(4.0));
+        let l = Radiance::new(s(0.25));
         let ds_dmu = we * l;
-        let p_ray = PDF::<f32, ThroughputMeasure>::new(1.0);
-        let est: Estimate<f32> = ds_dmu / p_ray;
-        assert_eq!(*est, 1.0);
+        let p_ray = PDF::<Vf, ThroughputMeasure>::new(s(1.0));
+        let est: Estimate<Vf> = ds_dmu / p_ray;
+        assert_eq!(e(*est), 1.0);
     }
 
     #[test]

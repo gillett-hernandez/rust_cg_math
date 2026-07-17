@@ -116,17 +116,17 @@ impl ChartedMeasure<R> for Length {
 ///
 /// ```
 /// use math::prelude::*;
-/// let f: Integrand<f32, Wavelength> = Integrand::new(6.0);
-/// let p: PDF<f32, Wavelength> = PDF::new(2.0);
-/// let est: Estimate<f32, Normalized<WavelengthDim>> = f / p; // integrate out λ
+/// let f: ScalarIntegrand<Wavelength> = Integrand::new_from(6.0);
+/// let p: ScalarPDF<Wavelength> = PDF::new_from(2.0);
+/// let est: ScalarEstimate<Normalized<WavelengthDim>> = f / p; // integrate out λ
 /// assert_eq!(*est, 3.0);
 /// ```
 ///
 /// A wavelength density cannot stand in for a length density (the #20 bug):
 /// ```compile_fail
 /// use math::prelude::*;
-/// let f: Integrand<f32, Wavelength> = Integrand::new(1.0);
-/// let p: PDF<f32, Length> = PDF::new(1.0);
+/// let f: ScalarIntegrand<Wavelength> = Integrand::new(1.0);
+/// let p: ScalarPDF<Length> = PDF::new(1.0);
 /// let _ = f / p; // ERROR: no `Div` impl — Wavelength ≠ Length
 /// ```
 #[derive(Copy, Clone, Debug, Default)]
@@ -434,9 +434,9 @@ impl<N: Unsigned> Domain for AreaProductDomain<N> {}
 /// use math::prelude::*;
 /// use typenum::U3;
 /// // a 3-vertex path contribution divided by its 3-vertex area-product pdf
-/// let f: Integrand<f32, AreaProduct<U3>> = Integrand::new(6.0);
-/// let p: PDF<f32, AreaProduct<U3>> = PDF::new(2.0);
-/// let est: Estimate<f32, Normalized<<AreaProduct<U3> as Measure>::Dim>> = f / p; // ranks match → OK
+/// let f: ScalarIntegrand<AreaProduct<U3>, AreaProductDomain<U3>> = Integrand::new_from(6.0);
+/// let p: ScalarPDF<AreaProduct<U3>> = PDF::new_from(2.0);
+/// let est: ScalarEstimate<Normalized<<AreaProduct<U3> as Measure>::Dim>> = f / p; // ranks match → OK
 /// assert_eq!(*est, 3.0);
 /// ```
 ///
@@ -445,8 +445,8 @@ impl<N: Unsigned> Domain for AreaProductDomain<N> {}
 /// ```compile_fail
 /// use math::prelude::*;
 /// use typenum::{U2, U3};
-/// let f: Integrand<f32, AreaProduct<U3>> = Integrand::new(6.0);
-/// let p: PDF<f32, AreaProduct<U2>> = PDF::new(2.0);
+/// let f: ScalarIntegrand<AreaProduct<U3>> = Integrand::new_from(6.0);
+/// let p: ScalarPDF<AreaProduct<U2>> = PDF::new_from(2.0);
 /// let _est = f / p; // ERROR: AreaProduct<U3> ≠ AreaProduct<U2>
 /// ```
 #[derive(Debug, Copy, Clone)]
@@ -670,10 +670,10 @@ mod test {
         use typenum::U4;
         // PathThroughput<N> is now a Measure, so #1's Integrand / PDF division
         // cancels matching path ranks into a measure-free Estimate.
-        let f: Integrand<f32, PathThroughput<U4>> = Integrand::new(9.0);
-        let p: PDF<f32, PathThroughput<U4>> = PDF::new(3.0);
-        let est: Estimate<f32, Normalized<<PathThroughput<U4> as Measure>::Dim>> = f / p;
-        assert_eq!(*est, 3.0);
+        let f: Integrand<Vector<f32>, PathThroughput<U4>> = Integrand::new(Vector::splat(9.0));
+        let p: PDF<Vector<f32>, PathThroughput<U4>> = PDF::new(Vector::splat(3.0));
+        let est: Estimate<Vector<f32>, Normalized<<PathThroughput<U4> as Measure>::Dim>> = f / p;
+        assert_eq!((*est).extract::<0>(), 3.0);
     }
 
     #[test]
@@ -681,10 +681,10 @@ mod test {
         use typenum::U4;
         // #1's Integrand / PDF division cancels matching path ranks, yielding a
         // measure-free Estimate.
-        let f: Integrand<f32, AreaProduct<U4>> = Integrand::new(8.0);
-        let p: PDF<f32, AreaProduct<U4>> = PDF::new(2.0);
-        let est: Estimate<f32, Normalized<<AreaProduct<U4> as Measure>::Dim>> = f / p;
-        assert_eq!(*est, 4.0);
+        let f: Integrand<Vector<f32>, AreaProduct<U4>> = Integrand::new(Vector::splat(8.0));
+        let p: PDF<Vector<f32>, AreaProduct<U4>> = PDF::new(Vector::splat(2.0));
+        let est: Estimate<Vector<f32>, Normalized<<AreaProduct<U4> as Measure>::Dim>> = f / p;
+        assert_eq!((*est).extract::<0>(), 4.0);
     }
 
     // --- #26: ranked path measures carry the rank-powered dimension --------
@@ -837,7 +837,10 @@ mod test {
     #[test]
     fn vector_abs() {
         let v = Vector::<TestR>::new([-1.0, 2.0, -3.0, 4.0]);
-        assert_eq!(&Abs::abs(v).into_array()[..], &[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(
+            &SignedVector::abs(v).into_array()[..],
+            &[1.0, 2.0, 3.0, 4.0]
+        );
     }
 
     #[test]
@@ -877,42 +880,48 @@ mod test {
         let v = <Vector<TestR> as FromScalar<f32>>::from_scalar(5.0);
         assert_eq!(&v.into_array()[..], &[5.0, 5.0, 5.0, 5.0]);
 
+        // arithmetic identities/min/max now come straight from thermite's
+        // `NumericVector` (the field type is a thermite vector, not our old `Field`).
         let a = Vector::<TestR>::new([1.0, 4.0, 1.0, 4.0]);
         let b = Vector::<TestR>::new([3.0, 2.0, 3.0, 2.0]);
-        assert_eq!(&Field::min(&a, b).into_array()[..], &[1.0, 2.0, 1.0, 2.0]);
-        assert_eq!(&Field::max(&a, b).into_array()[..], &[3.0, 4.0, 3.0, 4.0]);
-        assert_eq!(&<Vector<TestR> as Field>::ZERO.into_array()[..], &[0.0; 4]);
-        assert_eq!(&<Vector<TestR> as Field>::ONE.into_array()[..], &[1.0; 4]);
-    }
-
-    #[test]
-    fn f32_field_and_checks() {
-        assert_eq!(Field::min(&2.0f32, 5.0), 2.0);
-        assert_eq!(Field::max(&2.0f32, 5.0), 5.0);
-        assert_eq!(<f32 as Field>::ZERO, 0.0);
-        assert_eq!(<f32 as Field>::ONE, 1.0);
-        assert_eq!(f32::NAN.check_nan(), CheckResult::All);
-        assert_eq!(1.0f32.check_nan(), CheckResult::None);
-        assert_eq!(f32::INFINITY.check_inf(), CheckResult::All);
-        assert_eq!(1.0f32.check_inf(), CheckResult::None);
-        assert_eq!(Abs::abs(-3.0f32), 3.0);
-    }
-
-    #[test]
-    fn f32_total_partial_ord() {
         assert_eq!(
-            TotalPartialOrd::partial_cmp(&1.0f32, &2.0),
+            &NumericVector::min(a, b).into_array()[..],
+            &[1.0, 2.0, 1.0, 2.0]
+        );
+        assert_eq!(
+            &NumericVector::max(a, b).into_array()[..],
+            &[3.0, 4.0, 3.0, 4.0]
+        );
+        assert_eq!(
+            &<Vector<TestR> as NumericVector>::ZERO.into_array()[..],
+            &[0.0; 4]
+        );
+        assert_eq!(
+            &<Vector<TestR> as NumericVector>::ONE.into_array()[..],
+            &[1.0; 4]
+        );
+    }
+
+    #[test]
+    fn one_lane_vector_total_partial_ord() {
+        // `f32` is no longer in the trait system; the 1-lane `Vector<f32>` is the
+        // scalar stand-in and gets `TotalPartialOrd` from the blanket impl.
+        let one = Vector::<f32>::splat(1.0);
+        let two = Vector::<f32>::splat(2.0);
+        let nan = Vector::<f32>::splat(f32::NAN);
+        assert_eq!(
+            TotalPartialOrd::partial_cmp(&one, &two),
             Some(Ordering::Less)
         );
         assert_eq!(
-            TotalPartialOrd::partial_cmp(&2.0f32, &2.0),
+            TotalPartialOrd::partial_cmp(&two, &two),
             Some(Ordering::Equal)
         );
         assert_eq!(
-            TotalPartialOrd::partial_cmp(&3.0f32, &2.0),
+            TotalPartialOrd::partial_cmp(&two, &one),
             Some(Ordering::Greater)
         );
-        assert_eq!(TotalPartialOrd::partial_cmp(&f32::NAN, &2.0), None);
+        assert_eq!(TotalPartialOrd::partial_cmp(&nan, &two), None);
     }
 
     #[test]
