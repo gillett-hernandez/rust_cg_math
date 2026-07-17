@@ -2,15 +2,42 @@ use crate::prelude::*;
 use thermite::math::TranscendentalMath;
 
 #[inline(always)]
-pub fn power_heuristic(a: f32, b: f32) -> f32 {
-    (a * a) / (a * a + b * b)
+// #[deprecated(note="use power_heuristic_pdf")]
+pub fn power_heuristic(a: f32, b: f32, p: f32) -> f32 {
+    a.powf(p) / (a.powf(p) + b.powf(p))
 }
 
 /// Vector form of `power_heuristic`. Replaces the old `power_heuristic_hero`
 /// (which was hardcoded to `f32x4`) — now generic across thermite vector widths.
 #[inline(always)]
-pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
-    (a * a) / (a * a + b * b)
+// #[deprecated(note="use power_heuristic_pdf")]
+pub fn power_heuristic_v<V: FloatVector + TranscendentalMath<Element = T>, T: FloatElement>(
+    a: V,
+    b: V,
+    p: V,
+) -> V {
+    a.powf(p) / (a.powf(p) + b.powf(p))
+}
+
+#[inline(always)]
+pub fn power_heuristic_multiple<
+    V: FloatVector + TranscendentalMath<Element = T>,
+    T: FloatElement,
+>(
+    a: V,
+    b: &[V],
+    p: V,
+) -> V {
+    let sum = b.iter().map(|e: &V| e.powf(p)).sum();
+    a.powf(p) / (a.powf(p) + sum)
+}
+
+pub fn hero_power_heuristic<V: FloatVector + TranscendentalMath<Element = T>, T: FloatElement>(
+    a: V,
+    b: V,
+    p: V,
+) -> V {
+    power_heuristic_v(V::splat(a.extract::<0>()), b, p)
 }
 
 /// MIS power heuristic (β = 2, Veach eq. 9.13) for two sampling strategies whose
@@ -41,9 +68,15 @@ pub fn power_heuristic_v<V: NumericVector>(a: V, b: V) -> V {
 /// let _w = power_heuristic_pdf(a, b); // ERROR: Area ≠ SolidAngle
 /// ```
 #[inline(always)]
-pub fn power_heuristic_pdf<T: Field, M: Measure>(a: PDF<T, M>, b: PDF<T, M>) -> T {
-    let (a, b) = (a.raw(), b.raw());
-    (a * a) / (a * a + b * b)
+pub fn power_heuristic_pdf<
+    T: TranscendentalMath + FloatVector + GenericVector<Element = f32> + Field,
+    M: Measure,
+>(
+    a: PDF<T, M>,
+    b: PDF<T, M>,
+    p: T,
+) -> T {
+    power_heuristic_v(a.raw(), b.raw(), p)
 }
 
 #[inline(always)]
@@ -62,15 +95,16 @@ pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
 /// with transcendental support. Replaces the simdfloat_patch-gated
 /// `gaussian_f32x4`.
 #[inline(always)]
-pub fn gaussian_v<V>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
+pub fn gaussian_v<V, T>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
 where
-    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+    V: FloatVector<Element = T> + TranscendentalMath,
+    T: FloatElement + From<f32>,
 {
     let sigma = x
-        .cmp_lt(V::splat(mu))
-        .select(V::splat(sigma1), V::splat(sigma2));
-    let sqrt = (x - V::splat(mu)) / sigma;
-    V::splat(alpha) * (-(sqrt * sqrt) / V::splat(2.0)).exp()
+        .cmp_lt(V::splat(mu.into()))
+        .select(V::splat(sigma1.into()), V::splat(sigma2.into()));
+    let sqrt = (x - V::splat(mu.into())) / sigma;
+    V::splat(alpha.into()) * (-(sqrt * sqrt) / V::splat(2.0.into())).exp()
 }
 
 #[inline(always)]
@@ -91,13 +125,14 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
 /// Vector form of `blackbody`. Replaces the simdfloat_patch-gated
 /// `blackbody_f32x4`; now works across thermite vector widths.
 #[inline(always)]
-pub fn blackbody_v<V>(temperature: f32, lambda: V) -> V
+pub fn blackbody_v<V, T>(temperature: f32, lambda: V) -> V
 where
-    V: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+    V: FloatVector<Element = T> + TranscendentalMath,
+    T: FloatElement + From<f32>,
 {
-    let lambda = lambda * V::splat(1e-9);
-    lambda.powf(V::splat(-5.0)) * V::splat(HCC2)
-        / ((V::splat(HKC) / (lambda * V::splat(temperature))).exp() - V::splat(1.0))
+    let lambda = lambda * V::splat(1e-9.into());
+    lambda.powf(V::splat((-5.0).into())) * V::splat(HCC2.into())
+        / ((V::splat(HKC.into()) / (lambda * V::splat(temperature.into()))).exp() - V::ONE)
 }
 
 #[inline(always)]
@@ -187,7 +222,7 @@ pub fn sd_ellipse(p: (f32, f32), e: (f32, f32)) -> f32 {
 #[inline(always)]
 pub fn sd_ellipse_v<V>(px: V, py: V, e: (f32, f32)) -> V
 where
-    V: FloatVectorWithBits<Element = f32>,
+    V: FloatVector<Element = f32>,
 {
     let pax = px.abs();
     let pay = py.abs();
@@ -197,7 +232,7 @@ where
     let vey = V::splat(eiy * (e2y - e2x));
     let (ex, ey) = (V::splat(e.0), V::splat(e.1));
     let (eix_v, eiy_v) = (V::splat(eix), V::splat(eiy));
-    let zero = V::splat(0.0);
+    let zero = V::ZERO;
     let one = V::splat(1.0);
 
     let mut tx = V::splat(FRAC_1_SQRT_2);
@@ -232,9 +267,6 @@ where
     inside.select(-dist, dist)
 }
 
-
-
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -244,14 +276,14 @@ mod test {
         #[test]
         fn power_heuristic_in_unit_range(a in 0.0f32..100.0, b in 0.0f32..100.0) {
             prop_assume!(a + b > 1e-6);
-            let h = power_heuristic(a, b);
+            let h = power_heuristic(a, b, 2.0);
             prop_assert!(h >= 0.0 && h <= 1.0, "power_heuristic({}, {}) = {}", a, b, h);
         }
 
         #[test]
         fn power_heuristic_complement(a in 0.01f32..100.0, b in 0.01f32..100.0) {
-            let h1 = power_heuristic(a, b);
-            let h2 = power_heuristic(b, a);
+            let h1 = power_heuristic(a, b, 2.0);
+            let h2 = power_heuristic(b, a, 2.0);
             let sum = h1 + h2;
             prop_assert!((sum - 1.0).abs() < 1e-4, "h(a,b)+h(b,a)={}", sum);
         }
@@ -260,18 +292,19 @@ mod test {
         fn power_heuristic_pdf_matches_raw(a in 0.01f32..100.0, b in 0.01f32..100.0) {
             // the measure-tagged form must compute exactly the same weight as the
             // raw primitive once the measure tag is applied.
-            let pa: PDF<f32, Area> = PDF::new(a);
-            let pb: PDF<f32, Area> = PDF::new(b);
-            let w = power_heuristic_pdf(pa, pb);
-            prop_assert_eq!(w, power_heuristic(a, b));
+            let pa: PDF<Vector<f32>, Area> = PDF::new(Vector::splat(a));
+            let pb: PDF<Vector<f32>, Area> = PDF::new(Vector::splat(b));
+            let w = power_heuristic_pdf(pa, pb, Vector::splat(2.0));
+            let diff = SignedVector::abs(w - Vector::splat(power_heuristic(a, b, 2.0))).extract::<0>() ;
+            prop_assert!(diff < 0.000001, "{:?}",  diff );
         }
 
         #[test]
         fn power_heuristic_pdf_complement(a in 0.01f32..100.0, b in 0.01f32..100.0) {
             // two pdfs against the SAME measure: weights still sum to 1.
-            let pa: PDF<f32, Area> = PDF::new(a);
-            let pb: PDF<f32, Area> = PDF::new(b);
-            let sum = power_heuristic_pdf(pa, pb) + power_heuristic_pdf(pb, pa);
+            let pa: PDF<Vector<f32>, Area> = PDF::new(Vector::splat(a));
+            let pb: PDF<Vector<f32>, Area> = PDF::new(Vector::splat(b));
+            let sum = (power_heuristic_pdf(pa, pb, Vector::splat(2.0)) + power_heuristic_pdf(pb, pa, Vector::splat(2.0))).extract::<0>();
             prop_assert!((sum - 1.0).abs() < 1e-4, "w(a,b)+w(b,a)={}", sum);
         }
 
@@ -297,8 +330,8 @@ mod test {
         #[test]
         fn power_heuristic_v_matches_scalar(a in 0.01f32..100.0, b in 0.01f32..100.0) {
             type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
-            let r = power_heuristic_v(Vector::<TestR>::splat(a), Vector::<TestR>::splat(b));
-            let s = power_heuristic(a, b);
+            let r: Vector<TestR> = power_heuristic_v(Vector::splat(a), Vector::splat(b), Vector::splat(2.0));
+            let s = power_heuristic(a, b, 2.0);
             for lane in r.into_array() {
                 prop_assert!((lane - s).abs() < 1e-5, "lane {} vs scalar {}", lane, s);
             }

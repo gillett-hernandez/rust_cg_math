@@ -1,7 +1,7 @@
 use typenum::{NonZero, PInt, Sum, U1, Unsigned};
 
 use crate::spaces::{
-    Angles, Circle, DirectionalSector, DiskSpace, Directions, Domain, Element, Parameterization,
+    Angles, Circle, DirectionalSector, Directions, DiskSpace, Domain, Element, Parameterization,
     ProductDomain, ProductSet, R, RealLine, SimpleSet, SphericalCoordinates,
 };
 
@@ -191,8 +191,7 @@ impl ChartedMeasure<DiskSpace> for DiskAreaMeasure {
         // this formula (and the jacobian in differential_measure) can be
         // derived from the parameterization and change of variables / jacobian, then integration over the set bounds
 
-        set.0.span() % DiskSpace::SPACE.0.span() / 2.0
-            * (set.1.upper.powi(2) - set.1.lower.powi(2))
+        set.0.span() % DiskSpace::SPACE.0.span() / 2.0 * (set.1.upper.powi(2) - set.1.lower.powi(2))
     }
 
     #[inline(always)]
@@ -465,8 +464,7 @@ impl<N: Unsigned + NonZero> Measure for AreaProduct<N> {
     type Domain = AreaProductDomain<N>;
     // `Area^N = (L²)^N = L^{2N}` — two length factors with the positive rank
     // exponent `N` normalize to `L^{2N}`.
-    type Dim =
-        Product<crate::dimension::Length<PInt<N>>, crate::dimension::Length<PInt<N>>>;
+    type Dim = Product<crate::dimension::Length<PInt<N>>, crate::dimension::Length<PInt<N>>>;
 }
 
 /// Append a vertex to a path: `AreaProduct<N> * Area = AreaProduct<N+1>`.
@@ -497,27 +495,8 @@ where
     }
 }
 
-// misc traits
-pub trait Abs {
-    fn abs(self) -> Self;
-}
-
-impl Abs for f32 {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        self.abs()
-    }
-}
-
 pub trait TotalPartialOrd {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering>;
-}
-
-impl TotalPartialOrd for f32 {
-    #[inline(always)]
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        PartialOrd::partial_cmp(self, other)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -546,51 +525,11 @@ pub trait CheckInf {
     fn check_inf(&self) -> CheckResult;
 }
 
-impl CheckNAN for f32 {
-    #[inline(always)]
-    fn check_nan(&self) -> CheckResult {
-        if self.is_nan() {
-            CheckResult::All
-        } else {
-            CheckResult::None
-        }
-    }
-}
-
-impl CheckInf for f32 {
-    #[inline(always)]
-    fn check_inf(&self) -> CheckResult {
-        if self.is_infinite() {
-            CheckResult::All
-        } else {
-            CheckResult::None
-        }
-    }
-}
-
-pub trait Field:
-    Add<Output = Self>
-    + AddAssign
-    + Mul<Output = Self>
-    + MulAssign
-    + Neg<Output = Self>
-    + Div<Output = Self>
-    + Abs
-    + Clone
-    + Copy
-    + PartialEq
-    + TotalPartialOrd
-    + CheckInf
-    + CheckNAN
-    + Debug
-{
-    // trait bound to represent data types that can be integrated over.
-    // examples would include f32 and f32x4
-    const ZERO: Self;
-    const ONE: Self;
-    fn min(&self, other: Self) -> Self;
-    fn max(&self, other: Self) -> Self;
-}
+// NOTE: the field type that `PDF` / `Integrand` / `Quantity` / `WavelengthEnergy`
+// are generic over is now spelled directly as a thermite bound at each site —
+// `V: FloatVector<Element = T>, T: FloatElement + From<f32>` — rather than a local
+// `Field` aggregator trait. `f32` is no longer a valid field type; scalar call
+// sites use the 1-lane `Vector<f32>` (see `ScalarPDF<M>`).
 
 // NOTE: the reason we have to implement these (ToScalar, FromScalar, CheckInf, CheckNAN, MyPartialCmp)
 // as custom traits instead of using From, Into, etc is because we can't directly implement From or Into on external types
@@ -600,7 +539,7 @@ pub trait Field:
 // or external traits on local types, (From<f32x4> for Vec3)
 // but not external traits on external types (From<f32> for f32x4)
 
-pub trait Scalar: Field + PartialOrd {}
+pub trait Scalar: PartialOrd {}
 
 pub trait ToScalar<S: Scalar> {
     fn to_scalar(&self) -> S;
@@ -610,35 +549,7 @@ pub trait FromScalar<S: Scalar> {
     fn from_scalar(v: S) -> Self;
 }
 
-impl Field for f32 {
-    const ONE: Self = 1.0;
-    const ZERO: Self = 0.0;
-    #[inline(always)]
-    fn max(&self, other: Self) -> Self {
-        f32::max(*self, other)
-    }
-    #[inline(always)]
-    fn min(&self, other: Self) -> Self {
-        f32::min(*self, other)
-    }
-}
 impl Scalar for f32 {}
-
-impl ToScalar<f32> for f32 {
-    // noop
-    #[inline(always)]
-    fn to_scalar(&self) -> f32 {
-        *self
-    }
-}
-
-impl FromScalar<f32> for f32 {
-    // noop
-    #[inline(always)]
-    fn from_scalar(v: f32) -> f32 {
-        v
-    }
-}
 
 // ===========================================================================
 // Thermite bridge: blanket impls of our local traits over thermite's vector
@@ -646,26 +557,20 @@ impl FromScalar<f32> for f32 {
 // thereby plugs into `WavelengthEnergy`, `PDF`, `Curve`, etc.) without us
 // having to write per-type impls.
 //
-// `HeroWavelength` is `WavelengthEnergy<Vector<R>, Vector<R>>`, so these
-// `Vector<R>` impls are the only spectral-vector path; the old concrete
+// `HeroWavelength` is `WavelengthEnergy<V, V>`, so these
+// `V` impls are the only spectral-vector path; the old concrete
 // `std::simd::f32x4` impls were dead once that alias migrated and have been
 // removed (the crate no longer needs `#![feature(portable_simd)]`).
 // ===========================================================================
 
-// The blanket impls are written over `Vector<R>` (concrete type constructor) +
+// The blanket impls are written over `V` (concrete type constructor) +
 // the relevant `*Register` bound, *not* over `V: FloatVector`. Coherence
 // otherwise rejects them — Rust can't prove `f32` will never grow a
 // `FloatVector` impl in a future thermite version, so `impl<V: FloatVector> X
 // for V` is treated as potentially overlapping with `impl X for f32`. Bounding
-// on `Vector<R>` is decidable: `f32` cannot be `Vector<R>` for any R.
-impl<R: thermite::register::SignedRegister> Abs for Vector<R> {
-    #[inline(always)]
-    fn abs(self) -> Self {
-        <Self as SignedVector>::abs(self)
-    }
-}
+// on `V` is decidable: `f32` cannot be `V` for any R.
 
-impl<R: thermite::register::FloatRegister> CheckNAN for Vector<R> {
+impl<V: FloatVector> CheckNAN for V {
     #[inline(always)]
     fn check_nan(&self) -> CheckResult {
         let mask = <Self as FloatVector>::is_nan(*self);
@@ -679,7 +584,7 @@ impl<R: thermite::register::FloatRegister> CheckNAN for Vector<R> {
     }
 }
 
-impl<R: thermite::register::FloatRegister> CheckInf for Vector<R> {
+impl<V: FloatVector> CheckInf for V {
     #[inline(always)]
     fn check_inf(&self) -> CheckResult {
         let mask = <Self as FloatVector>::is_infinite(*self);
@@ -693,7 +598,7 @@ impl<R: thermite::register::FloatRegister> CheckInf for Vector<R> {
     }
 }
 
-impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
+impl<V: FloatVector> TotalPartialOrd for V {
     #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         if *self == *other {
@@ -708,25 +613,19 @@ impl<R: thermite::register::FloatRegister> TotalPartialOrd for Vector<R> {
     }
 }
 
-// Lets spectral pdfs (`HeroWavelength`, i.e. `PDF<Vector<R>, _>`) flow through
+// Lets spectral pdfs (`HeroWavelength`, i.e. `PDF<V, _>`) flow through
 // the scalar-Jacobian measure conversions in `pdf.rs`.
-impl<R: thermite::register::FloatRegister<Element = f32>> FromScalar<f32> for Vector<R> {
+impl<V: FloatVector<Element = f32>> FromScalar<f32> for V {
     #[inline(always)]
     fn from_scalar(v: f32) -> Self {
-        Vector::<R>::splat(v)
+        V::splat(v)
     }
 }
 
-impl<R: thermite::register::FloatRegister> Field for Vector<R> {
-    const ZERO: Self = <Vector<R> as NumericVector>::ZERO;
-    const ONE: Self = <Vector<R> as NumericVector>::ONE;
+impl<V: FloatVector<Element = f32>> ToScalar<f32> for V {
     #[inline(always)]
-    fn min(&self, other: Self) -> Self {
-        <Self as NumericVector>::min(*self, other)
-    }
-    #[inline(always)]
-    fn max(&self, other: Self) -> Self {
-        <Self as NumericVector>::max(*self, other)
+    fn to_scalar(&self) -> f32 {
+        self.extract::<0>()
     }
 }
 
@@ -749,8 +648,7 @@ mod test {
         // multiplying by one ThroughputMeasure factor appends one path vertex: the rank
         // increments by U1 (not the old Add<N> doubling). Checked at compile time
         // by the type ascription on the binding.
-        let _: PathThroughput<U3> =
-            PathThroughput::<U2>::default() * ThroughputMeasure::default();
+        let _: PathThroughput<U3> = PathThroughput::<U2>::default() * ThroughputMeasure::default();
     }
 
     #[test]
@@ -798,10 +696,8 @@ mod test {
     fn area_product_dim_is_area_to_the_rank() {
         use typenum::U3;
         // `AreaProduct<3> = Area³ = (L²)³ = L⁶`.
-        assert_same::<
-            <AreaProduct<U3> as Measure>::Dim,
-            Product<AreaDim, Product<AreaDim, AreaDim>>,
-        >();
+        assert_same::<<AreaProduct<U3> as Measure>::Dim, Product<AreaDim, Product<AreaDim, AreaDim>>>(
+        );
     }
 
     #[test]
@@ -839,7 +735,10 @@ mod test {
             <Length as ChartedMeasure<R>>::measure(Bounds1D::new(2.0, 5.0)),
             3.0
         );
-        assert_eq!(<Length as ChartedMeasure<R>>::differential_measure(0.5), 1.0);
+        assert_eq!(
+            <Length as ChartedMeasure<R>>::differential_measure(0.5),
+            1.0
+        );
     }
 
     #[test]
@@ -884,8 +783,7 @@ mod test {
         assert!((m - 4.0 * PI).abs() < 1e-4, "full sphere solid angle {}", m);
         assert!(
             (<SolidAngle as ChartedMeasure<SphericalCoordinates>>::differential_measure((
-                0.0,
-                FRAC_PI_2
+                0.0, FRAC_PI_2
             )) - 1.0)
                 .abs()
                 < 1e-6
@@ -899,7 +797,9 @@ mod test {
         let m = <SolidAngle as ChartedMeasure<DirectionalSector>>::measure(set);
         assert!((m - TAU).abs() < 1e-5, "hemisphere sector {}", m);
         assert_eq!(
-            <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure([0.0, 0.0, 1.0]),
+            <SolidAngle as ChartedMeasure<DirectionalSector>>::differential_measure([
+                0.0, 0.0, 1.0
+            ]),
             1.0
         );
     }
@@ -922,10 +822,15 @@ mod test {
             (0.0, phi),
         );
         let expect = phi.cos().abs() * phi.sin();
-        assert!((d - expect).abs() < 1e-6, "differential {} vs {}", d, expect);
+        assert!(
+            (d - expect).abs() < 1e-6,
+            "differential {} vs {}",
+            d,
+            expect
+        );
     }
 
-    // --- Vector<R> blanket helper-trait impls ---
+    // --- V blanket helper-trait impls ---
 
     type TestR = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
 
@@ -956,7 +861,10 @@ mod test {
         let a = Vector::<TestR>::splat(1.0);
         let b = Vector::<TestR>::splat(2.0);
         assert_eq!(TotalPartialOrd::partial_cmp(&a, &a), Some(Ordering::Equal));
-        assert_eq!(TotalPartialOrd::partial_cmp(&b, &a), Some(Ordering::Greater));
+        assert_eq!(
+            TotalPartialOrd::partial_cmp(&b, &a),
+            Some(Ordering::Greater)
+        );
         assert_eq!(TotalPartialOrd::partial_cmp(&a, &b), Some(Ordering::Less));
         // incomparable: some lanes greater, some lesser
         let c = Vector::<TestR>::new([1.0, 5.0, 1.0, 5.0]);
@@ -992,9 +900,18 @@ mod test {
 
     #[test]
     fn f32_total_partial_ord() {
-        assert_eq!(TotalPartialOrd::partial_cmp(&1.0f32, &2.0), Some(Ordering::Less));
-        assert_eq!(TotalPartialOrd::partial_cmp(&2.0f32, &2.0), Some(Ordering::Equal));
-        assert_eq!(TotalPartialOrd::partial_cmp(&3.0f32, &2.0), Some(Ordering::Greater));
+        assert_eq!(
+            TotalPartialOrd::partial_cmp(&1.0f32, &2.0),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            TotalPartialOrd::partial_cmp(&2.0f32, &2.0),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            TotalPartialOrd::partial_cmp(&3.0f32, &2.0),
+            Some(Ordering::Greater)
+        );
         assert_eq!(TotalPartialOrd::partial_cmp(&f32::NAN, &2.0), None);
     }
 

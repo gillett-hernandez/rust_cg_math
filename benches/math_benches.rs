@@ -58,7 +58,7 @@ fn bench_geometry<S>(c: &mut Criterion, backend: &str)
 where
     S: Simd,
     S::f32x4: LinAlg3Register + LinAlg4Register + FloatRegister<Element = f32>,
-    Vector<S::f32x4>: FloatVectorWithBits<Element = f32> + TranscendentalMath,
+    Vector<S::f32x4>: FloatVector<Element = f32> + TranscendentalMath,
 {
     let mut group = c.benchmark_group(backend);
 

@@ -1,8 +1,9 @@
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul};
 
+use thermite::Vector;
+use thermite::register::Register;
 use thermite::simd::Simd;
 use thermite::vector::{GenericVector, NumericVector};
-use thermite::Vector;
 
 /// CIE XYZ tristimulus values stored in lanes 0..3 of an `f32x4`, lane 4 = 0.
 pub struct XYZColor<S: Simd>(pub Vector<S::f32x4>);
@@ -104,10 +105,10 @@ impl<S: Simd> AddAssign for XYZColor<S> {
     }
 }
 
-impl<S: Simd> From<XYZColor<S>> for Vector<S::f32x4> {
+impl<S: Simd> Into<Vector<S::f32x4>> for XYZColor<S> {
     #[inline(always)]
-    fn from(v: XYZColor<S>) -> Vector<S::f32x4> {
-        v.0
+    fn into(self) -> Vector<S::f32x4> {
+        self.0
     }
 }
 

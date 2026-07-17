@@ -163,7 +163,6 @@ impl<E: Field> MulAssign<E> for Throughput<E> {
     }
 }
 
-
 /// Divide throughput by a dimensionless field factor (e.g. Russian-roulette
 /// continuation probability).
 impl<E: Field> Div<E> for Throughput<E> {
@@ -190,7 +189,7 @@ impl<E: Field> Div<E> for Throughput<E> {
 // ===========================================================================
 // The dimension/role/measure-tagged carrier (TODO #23 Slice 3).
 //
-// `Quantity<T, D, R, M>` is the *generated* form the bespoke newtypes above are
+// `Quantity<T, D, M>` is the *generated* form the bespoke newtypes above are
 // migrating toward: it carries, on zero-cost phantom tags, the base-dimension
 // exponent algebra `D` (`dimension::*`), the transport [`Role`] `R`, and the
 // reference [`Measure`] `M`. A mismatched dimension or measure becomes a compile
@@ -205,14 +204,14 @@ impl<E: Field> Div<E> for Throughput<E> {
 /// ([`dimension::Dimension`]), transport [`Role`] `R`, and reference [`Measure`]
 /// `M`. All three tags are zero-sized phantoms — the value is just a `T`.
 ///
-/// `PhantomData<fn() -> (D, R, M)>` (not `*const _`) keeps the carrier
+/// `PhantomData<fn() -> (D,  M)>` (not `*const _`) keeps the carrier
 /// `Send + Sync` for the threaded renderer while staying invariant in the tags.
-pub struct Quantity<T: Field, D: Dimension, R: Role, M: Measure> {
+pub struct Quantity<T: Field, D: Dimension, M: Measure> {
     v: T,
-    tags: PhantomData<fn() -> (D, R, M)>,
+    tags: PhantomData<fn() -> (D, M)>,
 }
 
-impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Quantity<T, D, M> {
     /// Wrap a raw field value with the (inferred) dimension/role/measure tags.
     #[inline(always)]
     pub fn new(v: T) -> Self {
@@ -233,7 +232,7 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
     /// normalization seam: build dimensions with the readable `Product`/base
     /// types, then `normalize()` before storing into a canonically-typed field.
     #[inline(always)]
-    pub fn normalize(self) -> Quantity<T, Normalized<D>, R, M>
+    pub fn normalize(self) -> Quantity<T, Normalized<D>, M>
     where
         D: Normalize,
         Normalized<D>: Dimension,
@@ -255,21 +254,21 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Quantity<T, D, R, M> {
 // Manual Clone/Copy/Debug so the tags need not be `Copy`/`Debug` themselves
 // (e.g. the dimension markers don't implement `PartialEq`): the phantom is always
 // `Copy`, and only the value `T` participates.
-impl<T: Field, D: Dimension, R: Role, M: Measure> Clone for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Clone for Quantity<T, D, M> {
     #[inline(always)]
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<T: Field, D: Dimension, R: Role, M: Measure> Copy for Quantity<T, D, R, M> {}
+impl<T: Field, D: Dimension, M: Measure> Copy for Quantity<T, D, M> {}
 
-impl<T: Field + fmt::Debug, D: Dimension, R: Role, M: Measure> fmt::Debug for Quantity<T, D, R, M> {
+impl<T: Field + fmt::Debug, D: Dimension, M: Measure> fmt::Debug for Quantity<T, D, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Quantity({:?})", self.v)
     }
 }
 
-impl<T: Field, D: Dimension, R: Role, M: Measure> Deref for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Deref for Quantity<T, D, M> {
     type Target = T;
     #[inline(always)]
     fn deref(&self) -> &T {
@@ -277,14 +276,14 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Deref for Quantity<T, D, R, M>
     }
 }
 
-impl<T: Field, D: Dimension, R: Role, M: Measure> From<T> for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> From<T> for Quantity<T, D, M> {
     #[inline(always)]
     fn from(v: T) -> Self {
         Self::new(v)
     }
 }
 
-impl<T: Field, D: Dimension, R: Role, M: Measure> Measurable for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Measurable for Quantity<T, D, M> {
     type Field = T;
     #[inline(always)]
     fn value(self) -> T {
@@ -294,14 +293,14 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Measurable for Quantity<T, D, 
 
 /// Scale a tagged quantity by a dimensionless field weight (a MIS weight, `1/N`,
 /// a cosine already folded in elsewhere) — tags unchanged.
-impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<T> for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Mul<T> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: T) -> Self {
         Quantity::new(self.v * rhs)
     }
 }
-impl<T: Field, D: Dimension, R: Role, M: Measure> Div<T> for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Div<T> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn div(self, rhs: T) -> Self {
@@ -313,18 +312,17 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Div<T> for Quantity<T, D, R, M
 /// and measure. The output is tagged with the canonical (normalized) dimension —
 /// the carrier's combining op normalizes its own output (the practical "lazy"
 /// rule), so accumulation is a renormalization seam.
-impl<T, D1, D2, R, M> Add<Quantity<T, D2, R, M>> for Quantity<T, D1, R, M>
+impl<T, D1, D2, M> Add<Quantity<T, D2, M>> for Quantity<T, D1, M>
 where
     T: Field,
     D1: Dimension + Normalize,
     D2: Dimension + SameDimension<D1>,
     Normalized<D1>: Dimension,
-    R: Role,
     M: Measure,
 {
-    type Output = Quantity<T, Normalized<D1>, R, M>;
+    type Output = Quantity<T, Normalized<D1>, M>;
     #[inline(always)]
-    fn add(self, rhs: Quantity<T, D2, R, M>) -> Self::Output {
+    fn add(self, rhs: Quantity<T, D2, M>) -> Self::Output {
         Quantity::new(self.v + rhs.v)
     }
 }
@@ -333,16 +331,15 @@ where
 /// to normalization), role, and measure. Unlike `Add` (which retags its output to
 /// the canonical dimension), `AddAssign` keeps `self`'s dimension tag `D1` — it
 /// mutates the value in place, so the type cannot change.
-impl<T, D1, D2, R, M> AddAssign<Quantity<T, D2, R, M>> for Quantity<T, D1, R, M>
+impl<T, D1, D2, M> AddAssign<Quantity<T, D2, M>> for Quantity<T, D1, M>
 where
     T: Field,
     D1: Dimension,
     D2: Dimension + SameDimension<D1>,
-    R: Role,
     M: Measure,
 {
     #[inline(always)]
-    fn add_assign(&mut self, rhs: Quantity<T, D2, R, M>) {
+    fn add_assign(&mut self, rhs: Quantity<T, D2, M>) {
         self.v = self.v + rhs.v;
     }
 }
@@ -354,17 +351,17 @@ where
 // dimensionless/roleless/measureless scalar weight.
 // ---------------------------------------------------------------------------
 
-impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Throughput<T>> for Quantity<T, D, R, M> {
+impl<T: Field, D: Dimension, M: Measure> Mul<Throughput<T>> for Quantity<T, D, M> {
     type Output = Self;
     #[inline(always)]
     fn mul(self, rhs: Throughput<T>) -> Self {
         Quantity::new(self.v * rhs.0)
     }
 }
-impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Quantity<T, D, R, M>> for Throughput<T> {
-    type Output = Quantity<T, D, R, M>;
+impl<T: Field, D: Dimension, M: Measure> Mul<Quantity<T, D, M>> for Throughput<T> {
+    type Output = Quantity<T, D, M>;
     #[inline(always)]
-    fn mul(self, rhs: Quantity<T, D, R, M>) -> Quantity<T, D, R, M> {
+    fn mul(self, rhs: Quantity<T, D, M>) -> Quantity<T, D, M> {
         Quantity::new(self.0 * rhs.v)
     }
 }
@@ -382,8 +379,8 @@ impl<T: Field, D: Dimension, R: Role, M: Measure> Mul<Quantity<T, D, R, M>> for 
 /// derived as `Normalized(Num ÷ M::Dim)`. `Num` is the numerator dimension
 /// ([`PowerDim`] for radiance/irradiance, [`Dimensionless`] for a BSDF), `R` the
 /// transport [`Role`], `M` the reference [`Measure`].
-pub type Density<T, Num, R, M> =
-    Quantity<T, Normalized<Product<Num, Reciprocal<<M as Measure>::Dim>>>, R, M>;
+pub type Density<T, Num, M> =
+    Quantity<T, Normalized<Product<Num, Reciprocal<<M as Measure>::Dim>>>, M>;
 
 // ---------------------------------------------------------------------------
 // The transported-quantity aliases (TODO #23/#26). Radiance and importance share
@@ -397,7 +394,7 @@ pub type Density<T, Num, R, M> =
 /// Radiance `L` (W·m⁻²·sr⁻¹) — the primal quantity transported toward the camera
 /// (Veach §3.4.3). Emitted radiance `L_e` is the same type (no separate
 /// `Emission`). What a path tracer accumulates.
-pub type Radiance<E> = Density<E, PowerDim, Prime, ThroughputMeasure>;
+pub type Radiance<E> = Density<E, PowerDim, ThroughputMeasure>;
 
 /// Importance `W_e` — sensor flux responsivity, the adjoint of radiance (Veach
 /// §3.7.3, eq. 4.19: `W_e = dS/dΦ`, a unitless-sensor response `S` per unit
@@ -408,11 +405,11 @@ pub type Radiance<E> = Density<E, PowerDim, Prime, ThroughputMeasure>;
 /// (`Importance × Radiance`) is therefore a genuine Radon–Nikodym chain-rule
 /// cancellation, not a same-dimension multiply — see the measurement impls
 /// below.
-pub type Importance<E> = Density<E, Dimensionless, Adjoint, PowerMeasure>;
+pub type Importance<E> = Density<E, Dimensionless, PowerMeasure>;
 
 /// Irradiance `E` (W·m⁻²) — radiance integrated over the projected hemisphere
 /// (Veach §3.4.2). An integrand against area.
-pub type Irradiance<E> = Density<E, PowerDim, Prime, Area>;
+pub type Irradiance<E> = Density<E, PowerDim, Area>;
 
 // ---------------------------------------------------------------------------
 // `BSDF` — the first quantity on the carrier. A BSDF value `f_s` has dimension
@@ -424,7 +421,7 @@ pub type Irradiance<E> = Density<E, PowerDim, Prime, Area>;
 /// — now a [`Quantity`] carrier instantiation (`Ω⁻¹`, primal, per projected solid
 /// angle). Combine with a cosine and a directional density via [`BSDF::estimator`]
 /// to get a dimensionless [`Throughput`] factor.
-pub type BSDF<E> = Density<E, Dimensionless, Prime, ProjectedSolidAngle>;
+pub type BSDF<E> = Density<E, Dimensionless, ProjectedSolidAngle>;
 
 impl<E: Field + FromScalar<f32>> BSDF<E> {
     /// The single-bounce Monte Carlo factor `f · cos θ / pdf`, as a dimensionless
@@ -542,9 +539,9 @@ mod test {
     #[test]
     fn role_duals_are_opposite() {
         // Compile-time: Prime and Adjoint are each other's dual.
-        fn assert_dual<R: Role, D: Role>()
+        fn assert_dual<D: Role>()
         where
-            R: Role<Dual = D>,
+            D: Role<Dual = D>,
         {
         }
         assert_dual::<Prime, Adjoint>();

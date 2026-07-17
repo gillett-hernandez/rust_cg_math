@@ -48,6 +48,13 @@ pub(crate) fn assert_approx_eq(a: f32, b: f32, epsilon: f32) {
 mod test {
 
     use super::prelude::*;
+
+    #[test]
+    fn test_thermite() {
+        let v: Vector<Simd::f32x4> = Vector::new([0.1, 1.2, 2.3, 4.1]);
+        v.eq(other)
+    }
+
     #[test]
     fn test_variance_methods() {
         let mut samples = Vec::new();
