@@ -610,10 +610,9 @@ impl Curve {
 /// is scalarized on most CPUs anyway, so the simpler `map` path is close to
 /// equivalent in practice. A thermite-`gather_or` path can be added later if
 /// profiling shows it matters.
-impl<V, T> SpectralPowerDistributionFunction<V> for Curve
+impl<V> SpectralPowerDistributionFunction<V> for Curve
 where
-    V: TranscendentalMath<Element = T> + FloatVector,
-    T: FloatElement + From<f32> + Into<f32>,
+    V: TranscendentalMath<Element = f32> + FloatVector,
 {
     #[inline(always)]
     fn evaluate_power(&self, lambda: V) -> V {
@@ -656,9 +655,7 @@ where
                     bbd
                 } else {
                     V::splat(boost.into()) * bbd
-                        / V::splat(
-                            blackbody(temperature, max_blackbody_lambda(temperature)).into(),
-                        )
+                        / V::splat(blackbody(temperature, max_blackbody_lambda(temperature)).into())
                 }
             }
             // Linear / Tabulated / Machine: per-lane scalar fallback.
@@ -751,10 +748,9 @@ pub struct CurveWithCDF {
 
 /// Generic SIMD CDF sampler. Replaces the simdfloat_patch-gated
 /// `SpectralPowerDistributionFunction<f32x4> for CurveWithCDF`.
-impl<V, T> SpectralPowerDistributionFunction<V> for CurveWithCDF
+impl<V> SpectralPowerDistributionFunction<V> for CurveWithCDF
 where
-    V: TranscendentalMath<Element = T> + FloatVector,
-    T: FloatElement + From<f32> + Into<f32>,
+    V: TranscendentalMath<Element = f32> + FloatVector,
 {
     #[inline(always)]
     fn evaluate_power(&self, lambda: V) -> V {
@@ -796,7 +792,10 @@ where
                 let out_we = HeroWavelength::<V>::new_from_range(correlated_sample_x, *bounds);
                 let power: V = self.pdf.evaluate_power(out_we.lambda);
 
-                (out_we.replace_energy(power), V::splat(hero_pdf.into()).into())
+                (
+                    out_we.replace_energy(power),
+                    V::splat(hero_pdf.into()).into(),
+                )
             }
             _ => self.cdf.sample_power_and_pdf(wavelength_range, sample),
         }
@@ -1107,12 +1106,11 @@ mod test {
             // `SPDF<f32>` impl was `evaluate(λ).max(0)` / `.clamp(0, 1)`), and the
             // 1-lane `Vector<f32>` instantiation must agree with the wide one.
             let scalar_power = c.evaluate(lambda).max(0.0);
-            let one_lane_power =
-                SpectralPowerDistributionFunction::<Vector<f32>>::evaluate_power(
-                    c,
-                    Vector::<f32>::splat(lambda),
-                )
-                .extract::<0>();
+            let one_lane_power = SpectralPowerDistributionFunction::<Vector<f32>>::evaluate_power(
+                c,
+                Vector::<f32>::splat(lambda),
+            )
+            .extract::<0>();
             let vec_power = SpectralPowerDistributionFunction::<Vector<R4>>::evaluate_power(c, v);
             let tol = (scalar_power.abs() * 1e-3).max(1e-4);
             assert!((one_lane_power - scalar_power).abs() <= tol);
@@ -1164,8 +1162,14 @@ mod test {
             Sample1D::new(0.4),
         );
         let sw_lambda = sw.lambda.extract::<0>();
-        assert!(sw_lambda >= BOUNDED_VISIBLE_RANGE.lower && sw_lambda <= BOUNDED_VISIBLE_RANGE.upper);
-        assert!(pdf.raw().extract::<0>() >= 0.0, "pdf {}", pdf.raw().extract::<0>());
+        assert!(
+            sw_lambda >= BOUNDED_VISIBLE_RANGE.lower && sw_lambda <= BOUNDED_VISIBLE_RANGE.upper
+        );
+        assert!(
+            pdf.raw().extract::<0>() >= 0.0,
+            "pdf {}",
+            pdf.raw().extract::<0>()
+        );
     }
 
     #[test]
@@ -1350,6 +1354,30 @@ mod test {
 
         assert_approx_eq(integral, target, 0.0001);
     }
+
+    // #[test]
+    // fn test_curve_compilation_error() {
+    //     fn inner<V>(lambda: V) -> Vector<f32>
+    //     where
+    //         V: FloatVector<Element = f32>
+    //             + CoreMath
+    //             + TranscendentalMath
+    //             + SpecializedTranscendentalMath<T>,
+    //     {
+    //         let test_curve = Curve::InverseExponential {
+    //             signal: get_test_exponential_signal(),
+    //         };
+
+    //         test_curve.evaluate_power(narrowed)
+    //     }
+    //     assert!(
+    //         inner::<Vector<<thermite::backend::scalar::Scalar as Simd>::f32x4>, f32>(Vector::new(
+    //             [500.0, 500.0, 500.0, 500.0]
+    //         ))
+    //         .sum_elements()
+    //             > 0.0
+    //     );
+    // }
 
     #[test]
     fn test_curve_polynomial() {
@@ -1536,8 +1564,16 @@ mod test {
             let energy = we.energy.extract::<0>();
             let lambda = we.lambda.extract::<0>();
             let p = pdf.raw().extract::<0>();
-            assert!(energy.is_finite(), "energy should be finite, got {}", energy);
-            assert!(lambda.is_finite(), "lambda should be finite, got {}", lambda);
+            assert!(
+                energy.is_finite(),
+                "energy should be finite, got {}",
+                energy
+            );
+            assert!(
+                lambda.is_finite(),
+                "lambda should be finite, got {}",
+                lambda
+            );
             assert!(
                 p > 0.0 && p.is_finite(),
                 "pdf should be finite/positive: {:?}",

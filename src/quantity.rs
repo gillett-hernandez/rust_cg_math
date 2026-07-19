@@ -14,7 +14,7 @@
 //! `Measurable`").
 //!
 //! These wrap the energy field `E: Field`, so they are backend-generic: `E` can
-//! be `f32` or a thermite SIMD register `Vector<R>`. Scalars that enter the
+//! be `f32` or a thermite SIMD register `V: FloatVector`. Scalars that enter the
 //! algebra (cosines, MIS weights) go through `FromScalar<f32>` rather than
 //! hard-coded `f32` arithmetic, so the spectral/SIMD path keeps working.
 //!
@@ -39,7 +39,7 @@ use std::{fmt, marker::PhantomData, ops::Deref};
 /// [`Quantity`] carrier (TODO #23 Slice 3).
 pub trait Measurable: Copy {
     /// The underlying energy field type (a thermite float vector, e.g.
-    /// `Vector<f32>` or `Vector<R>`).
+    /// `V: FloatVector`).
     type Field;
     /// Read the raw value out of the quantity.
     fn value(self) -> Self::Field;
@@ -210,6 +210,18 @@ impl<E: FloatVector> Div<E> for Throughput<E> {
 pub struct Quantity<T: FloatVector, D: Dimension, M: Measure> {
     v: T,
     tags: PhantomData<fn() -> (D, M)>,
+}
+
+impl<T: FloatVector<Element = E>, E: FloatElement + From<f32>, D: Dimension, M: Measure>
+    Quantity<T, D, M>
+{
+    #[inline(always)]
+    pub fn new_from(val: E) -> Self {
+        Self {
+            v: T::splat(val),
+            tags: PhantomData,
+        }
+    }
 }
 
 impl<T: FloatVector, D: Dimension, M: Measure> Quantity<T, D, M> {
@@ -424,10 +436,9 @@ pub type Irradiance<E> = Density<E, PowerDim, Area>;
 /// to get a dimensionless [`Throughput`] factor.
 pub type BSDF<E> = Density<E, Dimensionless, ProjectedSolidAngle>;
 
-impl<E, T> BSDF<E>
+impl<E> BSDF<E>
 where
-    E: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    E: FloatVector<Element = f32>,
 {
     /// The single-bounce Monte Carlo factor `f · cos θ / pdf`, as a dimensionless
     /// [`Throughput`].
@@ -512,10 +523,7 @@ mod test {
         // Lane-generic over the field: scalar f32 and a SIMD register both work.
         type Lanes = <thermite::backend::scalar::Scalar as thermite::simd::Simd>::f32x4;
         // The tags are phantoms: a tagged quantity is the same size as its field.
-        assert_eq!(
-            std::mem::size_of::<BSDF<Vf>>(),
-            std::mem::size_of::<Vf>()
-        );
+        assert_eq!(std::mem::size_of::<BSDF<Vf>>(), std::mem::size_of::<Vf>());
         assert_eq!(
             std::mem::size_of::<BSDF<Vector<Lanes>>>(),
             std::mem::size_of::<Vector<Lanes>>()

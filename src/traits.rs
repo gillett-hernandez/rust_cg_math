@@ -119,14 +119,14 @@ impl ChartedMeasure<R> for Length {
 /// let f: ScalarIntegrand<Wavelength> = Integrand::new_from(6.0);
 /// let p: ScalarPDF<Wavelength> = PDF::new_from(2.0);
 /// let est: ScalarEstimate<Normalized<WavelengthDim>> = f / p; // integrate out λ
-/// assert_eq!(*est, 3.0);
+/// assert_eq!((*est).extract::<0>(), 3.0);
 /// ```
 ///
 /// A wavelength density cannot stand in for a length density (the #20 bug):
 /// ```compile_fail
 /// use math::prelude::*;
-/// let f: ScalarIntegrand<Wavelength> = Integrand::new(1.0);
-/// let p: ScalarPDF<Length> = PDF::new(1.0);
+/// let f: ScalarIntegrand<Wavelength> = Integrand::new_from(1.0);
+/// let p: ScalarPDF<Length> = PDF::new_from(1.0);
 /// let _ = f / p; // ERROR: no `Div` impl — Wavelength ≠ Length
 /// ```
 #[derive(Copy, Clone, Debug, Default)]
@@ -434,10 +434,10 @@ impl<N: Unsigned> Domain for AreaProductDomain<N> {}
 /// use math::prelude::*;
 /// use typenum::U3;
 /// // a 3-vertex path contribution divided by its 3-vertex area-product pdf
-/// let f: ScalarIntegrand<AreaProduct<U3>, AreaProductDomain<U3>> = Integrand::new_from(6.0);
+/// let f: ScalarIntegrand<AreaProduct<U3>> = Integrand::new_from(6.0);
 /// let p: ScalarPDF<AreaProduct<U3>> = PDF::new_from(2.0);
 /// let est: ScalarEstimate<Normalized<<AreaProduct<U3> as Measure>::Dim>> = f / p; // ranks match → OK
-/// assert_eq!(*est, 3.0);
+/// assert_eq!((*est).extract::<0>(), 3.0);
 /// ```
 ///
 /// A 2-vertex pdf cannot cancel a 3-vertex integrand:
@@ -527,7 +527,7 @@ pub trait CheckInf {
 
 // NOTE: the field type that `PDF` / `Integrand` / `Quantity` / `WavelengthEnergy`
 // are generic over is now spelled directly as a thermite bound at each site —
-// `V: FloatVector<Element = T>, T: FloatElement + From<f32>` — rather than a local
+// `V: FloatVector<Element = f32>` — rather than a local
 // `Field` aggregator trait. `f32` is no longer a valid field type; scalar call
 // sites use the 1-lane `Vector<f32>` (see `ScalarPDF<M>`).
 

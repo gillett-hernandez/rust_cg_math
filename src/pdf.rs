@@ -44,14 +44,13 @@ impl<V, M: Measure> PDF<V, M> {
     }
 }
 
-impl<V, T, M: Measure> PDF<V, M>
+impl<V, M: Measure> PDF<V, M>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     pub fn new_from(v: f32) -> Self {
         Self {
-            v: V::splat(v.into()),
+            v: V::splat(v),
             measure: PhantomData,
         }
     }
@@ -60,18 +59,16 @@ where
 // impl From (and Into) when Measure can be inferred
 impl<V, M: Measure> From<V> for PDF<V, M>
 where
-    V: FloatVector,
-    <V as GenericVector>::Element: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     fn from(v: V) -> Self {
         Self::new(v)
     }
 }
 
-impl<V, T, M: Measure> Mul<V> for PDF<V, M>
+impl<V, M: Measure> Mul<V> for PDF<V, M>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     type Output = Self;
     // must be under the same field and measure
@@ -92,8 +89,8 @@ where
 /// use math::prelude::*;
 /// let p: ScalarPDF<Area> = PDF::new_from(6.0);
 /// let q: ScalarPDF<Area> = PDF::new_from(2.0);
-/// let ratio: f32 = p / q; // same measure → bare scalar
-/// assert_eq!(ratio, 3.0);
+/// let ratio: Vector<f32> = p / q; // same measure → bare field value
+/// assert_eq!(ratio.extract::<0>(), 3.0);
 /// ```
 ///
 /// Different measures are rejected:
@@ -103,10 +100,9 @@ where
 /// let q: ScalarPDF<SolidAngle> = PDF::new_from(2.0);
 /// let _ = p / q; // ERROR: no `Div` impl — Area ≠ SolidAngle
 /// ```
-impl<V, T, M: Measure> Div<PDF<V, M>> for PDF<V, M>
+impl<V, M: Measure> Div<PDF<V, M>> for PDF<V, M>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     type Output = V;
     #[inline(always)]
@@ -125,15 +121,14 @@ where
 ///
 /// ```
 /// use math::prelude::*;
-/// let p_area: PDF<f32, Area> = PDF::new(2.0);
-/// let p_dir: PDF<f32, ProjectedSolidAngle> = PDF::new(3.0);
-/// let p_ray: PDF<f32, ThroughputMeasure> = p_area * p_dir;
-/// assert_eq!(p_ray.raw(), 6.0);
+/// let p_area: ScalarPDF<Area> = PDF::new_from(2.0);
+/// let p_dir: ScalarPDF<ProjectedSolidAngle> = PDF::new_from(3.0);
+/// let p_ray: ScalarPDF<ThroughputMeasure> = p_area * p_dir;
+/// assert_eq!(p_ray.raw().extract::<0>(), 6.0);
 /// ```
-impl<V, T, A: Measure, B: Measure> Mul<PDF<V, B>> for PDF<V, A>
+impl<V, A: Measure, B: Measure> Mul<PDF<V, B>> for PDF<V, A>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     type Output = PDF<V, ProductMeasure<A, B>>;
     #[inline(always)]
@@ -178,12 +173,12 @@ where
 /// ```
 /// use math::prelude::*;
 ///
-/// let f: Integrand<f32, SolidAngle> = Integrand::new(6.0);
-/// let p: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let f: ScalarIntegrand<SolidAngle> = Integrand::new_from(6.0);
+/// let p: ScalarPDF<SolidAngle> = PDF::new_from(2.0);
 /// // `f` carries no extra dimension (D = Nil), so the estimate's dimension is
 /// // just the measure's own: solid angle.
-/// let est: Estimate<f32, Normalized<SolidAngleDim>> = f / p; // measures match → OK
-/// assert_eq!(*est, 3.0);
+/// let est: ScalarEstimate<Normalized<SolidAngleDim>> = f / p; // measures match → OK
+/// assert_eq!((*est).extract::<0>(), 3.0);
 /// ```
 ///
 /// An area integrand cannot be divided by a solid-angle density:
@@ -191,8 +186,8 @@ where
 /// ```compile_fail
 /// use math::prelude::*;
 ///
-/// let f: Integrand<f32, Area> = Integrand::new(6.0);
-/// let p: PDF<f32, SolidAngle> = PDF::new(2.0);
+/// let f: ScalarIntegrand<Area> = Integrand::new_from(6.0);
+/// let p: ScalarPDF<SolidAngle> = PDF::new_from(2.0);
 /// let _est = f / p; // ERROR: no `Div` impl — Area ≠ SolidAngle
 /// ```
 ///
@@ -201,8 +196,8 @@ where
 /// ```compile_fail
 /// use math::prelude::*;
 ///
-/// let f: Integrand<f32, ThroughputMeasure> = Integrand::new(1.0);
-/// let p: PDF<f32, Area> = PDF::new(1.0);
+/// let f: ScalarIntegrand<ThroughputMeasure> = Integrand::new_from(1.0);
+/// let p: ScalarPDF<Area> = PDF::new_from(1.0);
 /// let _est = f / p; // ERROR: ThroughputMeasure ≠ Area
 /// ```
 ///
@@ -212,10 +207,10 @@ where
 /// ```compile_fail
 /// use math::prelude::*;
 ///
-/// let f: Integrand<f32, SolidAngle> = Integrand::new(1.0);
-/// let p: PDF<f32, SolidAngle> = PDF::new(1.0);
+/// let f: ScalarIntegrand<SolidAngle> = Integrand::new_from(1.0);
+/// let p: ScalarPDF<SolidAngle> = PDF::new_from(1.0);
 /// // converting to projected solid angle re-tags the density:
-/// let p_psa: PDF<f32, ProjectedSolidAngle> =
+/// let p_psa: ScalarPDF<ProjectedSolidAngle> =
 ///     p.convert(DirectionalGeom { cos_theta: 0.5 });
 /// let _est = f / p_psa; // ERROR: SolidAngle ≠ ProjectedSolidAngle
 /// ```
@@ -235,10 +230,9 @@ impl<V, M: Measure, D: Dimension> Integrand<V, M, D> {
     }
 }
 
-impl<V, T, M: Measure> Integrand<V, M>
+impl<V, M: Measure> Integrand<V, M>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     pub fn new_from(v: f32) -> Self {
         Self {
@@ -285,10 +279,9 @@ impl<V, D: Dimension> Estimate<V, D> {
     }
 }
 
-impl<V, T, D: Dimension> Estimate<V, D>
+impl<V, D: Dimension> Estimate<V, D>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     pub fn new_from(v: f32) -> Self {
         Self {
@@ -306,17 +299,16 @@ impl<V, D: Dimension> Deref for Estimate<V, D> {
     }
 }
 
-pub type ScalarIntegrand<M, D> = Integrand<Vector<f32>, M, D>;
+pub type ScalarIntegrand<M, D = Nil> = Integrand<Vector<f32>, M, D>;
 pub type ScalarEstimate<D> = Estimate<Vector<f32>, D>;
 
 /// `f(X) / p(X)` — the measures must match (same `M`) or this will not compile.
 /// The output dimension is `dim(f) + dim(μ)` (Veach App. 3.B), normalized so it
 /// unifies with hand-written `*Dim` aliases (mirrors the `Density` derivation,
 /// TODO #26).
-impl<V, T, M: Measure, D: Dimension> Div<PDF<V, M>> for Integrand<V, M, D>
+impl<V, M: Measure, D: Dimension> Div<PDF<V, M>> for Integrand<V, M, D>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
     Product<D, <M as Measure>::Dim>: Normalize,
     Normalized<Product<D, <M as Measure>::Dim>>: Dimension,
 {
@@ -327,10 +319,9 @@ where
     }
 }
 
-impl<V, T, D1, D2> Add<Estimate<V, D2>> for Estimate<V, D1>
+impl<V, D1, D2> Add<Estimate<V, D2>> for Estimate<V, D1>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
     D1: Dimension + Normalize,
     D2: Dimension + SameDimension<D1>,
     Normalized<D1>: Dimension,
@@ -342,10 +333,9 @@ where
     }
 }
 
-impl<V, T, D1, D2> AddAssign<Estimate<V, D2>> for Estimate<V, D1>
+impl<V, D1, D2> AddAssign<Estimate<V, D2>> for Estimate<V, D1>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
     D1: Dimension,
     D2: Dimension + SameDimension<D1>,
 {
@@ -356,10 +346,9 @@ where
 }
 
 /// Scale an estimate by a dimensionless weight (e.g. a MIS weight, or 1/N).
-impl<V, T, D: Dimension> Mul<V> for Estimate<V, D>
+impl<V, D: Dimension> Mul<V> for Estimate<V, D>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     type Output = Self;
     #[inline(always)]
@@ -392,10 +381,9 @@ pub trait MeasureConversion<From: Measure, To: Measure> {
     fn jacobian(&self) -> f32;
 }
 
-impl<V, T, FromM: Measure> PDF<V, FromM>
+impl<V, FromM: Measure> PDF<V, FromM>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     /// Re-express this density with respect to a different measure `To`,
     /// multiplying by the Radon–Nikodym derivative `dFrom/dTo`.
@@ -487,10 +475,9 @@ impl MeasureConversion<Area, ProjectedSolidAngle> for EdgeGeom {
 // ---------------------------------------------------------------------------
 
 // special conversions
-impl<V, T> PDF<V, SolidAngle>
+impl<V> PDF<V, SolidAngle>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos θ| (the measure-element \
@@ -504,10 +491,9 @@ where
     }
 }
 
-impl<V, T> PDF<V, Area>
+impl<V> PDF<V, Area>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32>,
 {
     #[deprecated(
         note = "POSSIBLE BUG: the old body multiplied by |cos θ| / r² (the measure-element \

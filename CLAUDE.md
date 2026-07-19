@@ -26,7 +26,7 @@ cargo test -- --nocapture  # run tests with stdout visible
 Every geometry / hero-wavelength type is generic over a thermite backend or register type. **The caller picks the backend**; this crate provides no default. Type parameters you'll see:
 
 - `S: thermite::simd::Simd` — chooses a whole backend (e.g. `Scalar`, `X86V3`). Provides `S::f32x4`, `S::f32x16`, etc. Used by `Vec3<S>`, `Point3<S>`, `XYZColor<S>`, `Matrix4x4<S>`, `Transform3<S>`, `TangentFrame<S>`, `Ray<S>`, `random_*<S>()`, `uv_to_direction<S>()`.
-- `R: thermite::register::FloatRegister<Element = f32>` — chooses one specific f32 register. Used by `HeroWavelength<R>` (so the caller can pick native-width `<S as FloatSimd<f32>>::fxN` or a fixed-width `S::f32x4` independently).
+- `V: thermite::vector::FloatVector` — chooses one specific vector type. Used by `HeroWavelength<V>` (so the caller can pick native-width `Vector<<S as FloatSimd<f32>>::fxN>` or a fixed-width `Vector<S::f32x4>` independently). The 1-lane `Vector<f32>` is the **scalar bridge**: it stands in everywhere a bare `f32` used to be a field/energy type (`ScalarPDF<M>`, `SingleWavelength`, …).
 
 Tests across the crate use `thermite::backend::scalar::Scalar` as the chosen backend for portability and determinism. Switch to `thermite::backend::x86_v3` in a CI matrix entry if you want SIMD-path coverage.
 
@@ -45,33 +45,35 @@ Tests across the crate use `thermite::backend::scalar::Scalar` as the chosen bac
 
 The library encodes measure-theoretic concepts at the type level:
 
-- **`Field` trait** (`traits.rs`): Abstraction for types that can be integrated over. Implemented for `f32` directly and **blanket-impl'd for every `Vector<R: FloatRegister>`** (so any thermite f32 vector type plugs into `WavelengthEnergy`, `PDF`, `Curve`, etc. without per-type wiring). The blanket impl bounds on `Vector<R>` (the type constructor), not `V: FloatVector`, to dodge a coherence conflict with the `f32` impl.
-- **`Scalar` trait**: `Field + PartialOrd` (only `f32`).
-- **`Measure` trait** (`traits.rs`): Defines a mathematical measure with an associated `Space` parameterization. Implementations: `Length`, `Area`, `Volume`, `SolidAngle<P>`, `ProjectedSolidAngle`, `Throughput`, `DiskAreaMeasure`.
+- **No `Field` trait — thermite bounds instead** (`traits.rs`): The old local `Field` aggregator trait was deleted. `f32` is **not** a valid field type; the field type is spelled directly at each site as `V: FloatVector<Element = f32>`, and scalar call sites use the 1-lane `Vector<f32>` (zero-cost bridge). Helper traits `CheckNAN`/`CheckInf`/`TotalPartialOrd` and `ToScalar`/`FromScalar` are blanket-impl'd over `V: FloatVector` (`to_scalar()` = `extract::<0>()`, `from_scalar` = `splat`).
+- **`Scalar` trait**: just `PartialOrd` now (only `f32` implements it).
+- **`Measure` trait** (`traits.rs`): Defines a mathematical measure with an associated `Domain` and `Dim` (dimension). Implementations: `Length`, `Wavelength`, `Area`, `Volume`, `SolidAngle`, `ProjectedSolidAngle`, `DiskAreaMeasure`, `ThroughputMeasure` (= `ProductMeasure<Area, ProjectedSolidAngle>`), `PathThroughput<N>`, `AreaProduct<N>`.
 - **`SpaceParameterization` trait** (`spaces.rs`): Defines the domain/space for a measure. `DirectionalSector` uses `[f32; 3]` for directions (not `Vec3<S>`) so the trait stays backend-agnostic.
-- **`PDF<T, M>`** (`pdf.rs`): A probability density function value parameterized by field type `T` and measure `M`. Supports measure conversions (e.g., `convert_to_solid_angle`, `convert_to_projected_solid_angle`). `Deref<Target=T>`.
+- **`PDF<V, M>`** (`pdf.rs`): A probability density parameterized by field vector `V` and measure `M`. `ScalarPDF<M> = PDF<Vector<f32>, M>` is the scalar form. Construct with `PDF::new(vector)` or `PDF::new_from(f32)` (splats); read with `.raw()` and `.extract::<0>()`. No `PartialEq`/`PartialOrd` derives (thermite vectors don't collapse comparisons). Measure conversions go through `convert(geom)` with a `MeasureConversion` witness (`DirectionalGeom`, `AreaGeom`, `EdgeGeom`); the `convert_to_*` methods are deprecated shims.
+- **`Integrand<V, M, D = Nil>` / `Estimate<V, D = Nil>`** (`pdf.rs`): Type-checked Monte Carlo estimator algebra — `Integrand / PDF → Estimate` requires matching measures at compile time; `PDF / PDF` (same measure) yields bare `V`; `PDF<_, A> * PDF<_, B> → PDF<_, ProductMeasure<A, B>>`. Scalar aliases `ScalarIntegrand<M, D = Nil>` and `ScalarEstimate<D>`.
+- **`Quantity<T, D, M>`** (`quantity.rs`): Dimension/measure-tagged value carrier (`T: FloatVector`). The former `Role` type parameter was dropped (the `Role` trait and `Radiant`/`Adjoint` markers remain for the bespoke `quantity!` newtypes like `Throughput`).
 
 ### Spectral / Color
 
-- **`WavelengthEnergy<L, E>`** (`spectral.rs`): Pairs a wavelength with an energy value.
-  - `SingleWavelength = WavelengthEnergy<f32, f32>`.
-  - `HeroWavelength<R> = WavelengthEnergy<Vector<R>, Vector<R>>` — caller picks `R` (e.g. `<X86V3 as FloatSimd<f32>>::fxN` for native width, or `<X86V3 as Simd>::f32x4` for a fixed 4-lane bundle).
+- **`WavelengthEnergy<V>`** (`spectral.rs`): Pairs a wavelength with an energy value; single type parameter (both fields are `V`).
+  - `SingleWavelength = WavelengthEnergy<Vector<f32>>` — fields are 1-lane vectors, not bare `f32`.
+  - `HeroWavelength<V> = WavelengthEnergy<V>` — caller picks the vector type `V` (e.g. `Vector<<X86V3 as FloatSimd<f32>>::fxN>` for native width, or `Vector<<X86V3 as Simd>::f32x4>` for a fixed 4-lane bundle).
   - `new_from_range` uses `Vector::indexed()` to lay out N evenly-spaced wavelengths; works at any lane count.
 - **`XYZColor<S>`** (`color/xyz.rs`): CIE XYZ color backed by `Vector<S::f32x4>`.
-- **CIE observers** (`spectral.rs`): Two flavors per channel: scalar `x_bar`/`y_bar`/`z_bar` (`f32 -> f32`) and generic SIMD `x_bar_v`/`y_bar_v`/`z_bar_v` (`V -> V` where `V: FloatVectorWithBits<Element = f32> + TranscendentalMath`). Operating in angstroms internally (input nm * 10).
+- **CIE observers** (`spectral.rs`): Two flavors per channel: scalar `x_bar`/`y_bar`/`z_bar` (`f32 -> f32`) and generic SIMD `x_bar_v`/`y_bar_v`/`z_bar_v` (`V -> V` where `V: FloatVector<Element = f32> + TranscendentalMath`). Operating in angstroms internally (input nm * 10).
 
 ### Curves and SPDs
 
 - **`Curve`** (`curves.rs`): Enum with `Const`, `Linear` (uniformly-spaced + interpolation), `Tabulated` (arbitrary `(x, y)` pairs), `Polynomial`, `Cauchy`, `Exponential` / `InverseExponential` (sums of asymmetric Gaussians), `Blackbody`, and `Machine` (composable Add/Mul stack).
 - **`CurveWithCDF`**: `Curve` + precomputed CDF for importance sampling.
-- **`SpectralPowerDistributionFunction<T>`**: implemented for `T = f32` (scalar) and for `T = Vector<R>` (generic over any thermite f32 float register with transcendental math). `Curve::Linear`/`Tabulated`/`Machine` fall back to per-lane scalar `v.map(|l| self.evaluate(l))` in the vector impl — correct but not maximally vectorized. A thermite `gather_or` path can replace `Linear`'s map fallback if profiling demands it.
+- **`SpectralPowerDistributionFunction<T>`**: one generic impl for `T = V: FloatVector + TranscendentalMath` (the dedicated `f32` impl was removed with the `Field` trait — evaluate at `Vector<f32>` for scalar work). `Curve::Linear`/`Tabulated`/`Machine` fall back to per-lane scalar `v.map(|l| self.evaluate(l))` in the vector impl — correct but not maximally vectorized. A thermite `gather_or` path can replace `Linear`'s map fallback if profiling demands it.
 - **`InterpolationMode`**: `Linear`, `Nearest`, `Cubic`.
 
 ### Sampling
 
 - **`Sample1D`, `Sample2D`, `Sample3D`** (`sample.rs`): Sample types with values in `[0, 1)`.
 - **`Sampler` trait**: `draw_1d`, `draw_2d`, `draw_3d`. Implementations: `RandomSampler`, `StratifiedSampler`.
-- **Sampling functions** (`random.rs`): `random_on_unit_sphere<S>`, `random_in_unit_sphere<S>`, `random_in_unit_disk<S>`, `random_cosine_direction<S>`, `random_to_sphere<S>`. All return `Vec3<S>`.
+- **Sampling functions** (`random.rs`): `random_on_unit_sphere<S>`, `random_in_unit_sphere<S>`, `random_in_unit_disk<S>`, `random_cosine_direction<S>`, `random_to_sphere<S>`. All return `Vec3<S>`. The `*_with_pdf` variants (plus `power_cosine_direction_with_pdf`, `ggx_direction_with_pdf`, `to_sphere_pdf`) also return the density as a measure-tagged `ScalarPDF<M>` (`SolidAngle`/`Area`/`Volume`).
 
 ### Transforms
 
@@ -82,7 +84,7 @@ The library encodes measure-theoretic concepts at the type level:
 ### Utility
 
 - **`Bounds1D`, `Bounds2D`** (`bounds.rs`): Axis-aligned intervals/rectangles. Half-open: `contains` is `[lower, upper)`.
-- **`misc.rs`**: Scalar and SIMD Gaussian (`gaussian` f64 / `gaussianf32` / `gaussian_v<V>`), blackbody (`blackbody` / `blackbody_v<V>`), power heuristic for MIS (`power_heuristic` / `power_heuristic_v<V>`), UV-direction conversions (`uv_to_direction<S>` / `direction_to_uv<S>`).
+- **`misc.rs`**: Scalar and SIMD Gaussian (`gaussian` f64 / `gaussianf32` / `gaussian_v<V>`), blackbody (`blackbody` / `blackbody_v<V>`), power heuristic for MIS with an **explicit exponent `p`** (`power_heuristic(a, b, p)` / `power_heuristic_v<V>` / `power_heuristic_multiple` / `hero_power_heuristic` / measure-checked `power_heuristic_pdf(a, b, p)`), UV-direction conversions (`uv_to_direction<S>` / `direction_to_uv<S>`).
 - **`FromScalar`/`ToScalar`** (`traits.rs`): Custom conversion traits between `f32` and thermite vectors (orphan rules block `From`/`Into`).
 
 ## Feature Flags

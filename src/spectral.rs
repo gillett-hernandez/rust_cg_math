@@ -32,10 +32,9 @@ pub fn z_bar(angstroms: f32) -> f32 {
 /// Vector form of the CIE X-bar observer fit. Generic across thermite f32
 /// float vectors. Replaces the simdfloat_patch-gated `x_bar_f32x4`.
 #[inline(always)]
-pub fn x_bar_v<V, T>(angstroms: V) -> V
+pub fn x_bar_v<V>(angstroms: V) -> V
 where
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32> + TranscendentalMath,
 {
     gaussian_v(angstroms, 1.056, 5998.0, 379.0, 310.0)
         + gaussian_v(angstroms, 0.362, 4420.0, 160.0, 267.0)
@@ -43,20 +42,18 @@ where
 }
 
 #[inline(always)]
-pub fn y_bar_v<V, T>(angstroms: V) -> V
+pub fn y_bar_v<V>(angstroms: V) -> V
 where
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32> + TranscendentalMath,
 {
     gaussian_v(angstroms, 0.821, 5688.0, 469.0, 405.0)
         + gaussian_v(angstroms, 0.286, 5309.0, 163.0, 311.0)
 }
 
 #[inline(always)]
-pub fn z_bar_v<V, T>(angstroms: V) -> V
+pub fn z_bar_v<V>(angstroms: V) -> V
 where
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32> + TranscendentalMath,
 {
     gaussian_v(angstroms, 1.217, 4370.0, 118.0, 360.0)
         + gaussian_v(angstroms, 0.681, 4590.0, 260.0, 138.0)
@@ -100,15 +97,12 @@ impl<V> WavelengthEnergy<V> {
 /// Generic SIMD -> XYZ conversion. Sums each spectral channel across lanes to
 /// produce scalar CIE XYZ tristimulus values. Replaces the simdfloat_patch-
 /// gated `From<WavelengthEnergy<f32x4, f32x4>> for XYZColor`.
-impl<
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32> + Into<f32>,
-    S: Simd,
-> From<WavelengthEnergy<V>> for XYZColor<S>
+impl<V: FloatVector<Element = f32> + TranscendentalMath, S: Simd> From<WavelengthEnergy<V>>
+    for XYZColor<S>
 {
     #[inline(always)]
     fn from(we: WavelengthEnergy<V>) -> Self {
-        let angstroms = we.lambda * V::splat(10.0.into());
+        let angstroms = we.lambda * V::splat(10.0);
         XYZColor::new(
             (we.energy * x_bar_v(angstroms.into()))
                 .sum_elements()
@@ -133,18 +127,17 @@ impl<
 //     }
 // }
 
-/// Generic hero-wavelength sampling. Lays out `V::LANES` evenly-
+/// Generic hero-wavelength sampling. Lays out `V::lanes()` evenly-
 /// spaced wavelengths starting from `bounds.lower + sample * bounds.span()`,
 /// wrapping any past `bounds.upper` back into range. Replaces the old
 /// `f32x4`-hardcoded `new_from_range` and now scales to whatever width `R` is.
-impl<V, T> WavelengthEnergyTrait<V> for WavelengthEnergy<V>
+impl<V> WavelengthEnergyTrait<V> for WavelengthEnergy<V>
 where
-    V: FloatVector<Element = T>,
-    T: FloatElement + From<f32>, //+ Into<f32>
+    V: FloatVector<Element = f32>,
 {
     #[inline(always)]
     fn new_from_range(sample: f32, bounds: Bounds1D) -> WavelengthEnergy<V> {
-        let lanes = V::LANES as f32;
+        let lanes = V::lanes() as f32;
         let hero = sample * bounds.span();
         let delta = bounds.span() / lanes;
         let mult = V::indexed();

@@ -11,7 +11,7 @@ pub fn power_heuristic(a: f32, b: f32, p: f32) -> f32 {
 /// (which was hardcoded to `f32x4`) — now generic across thermite vector widths.
 #[inline(always)]
 // #[deprecated(note="use power_heuristic_pdf")]
-pub fn power_heuristic_v<V: FloatVector + TranscendentalMath<Element = T>, T: FloatElement>(
+pub fn power_heuristic_v<V: FloatVector<Element = f32> + TranscendentalMath>(
     a: V,
     b: V,
     p: V,
@@ -20,10 +20,7 @@ pub fn power_heuristic_v<V: FloatVector + TranscendentalMath<Element = T>, T: Fl
 }
 
 #[inline(always)]
-pub fn power_heuristic_multiple<
-    V: FloatVector + TranscendentalMath<Element = T>,
-    T: FloatElement,
->(
+pub fn power_heuristic_multiple<V: FloatVector<Element = f32> + TranscendentalMath>(
     a: V,
     b: &[V],
     p: V,
@@ -32,7 +29,7 @@ pub fn power_heuristic_multiple<
     a.powf(p) / (a.powf(p) + sum)
 }
 
-pub fn hero_power_heuristic<V: FloatVector + TranscendentalMath<Element = T>, T: FloatElement>(
+pub fn hero_power_heuristic<V: FloatVector<Element = f32> + TranscendentalMath>(
     a: V,
     b: V,
     p: V,
@@ -53,25 +50,22 @@ pub fn hero_power_heuristic<V: FloatVector + TranscendentalMath<Element = T>, T:
 ///
 /// ```
 /// use math::prelude::*;
-/// let a: ScalarPDF<Area> = ScalarPDF::new(3.0);
-/// let b: ScalarPDF<Area> = ScalarPDF::new(4.0);
-/// let w = power_heuristic_pdf(a, b); // measures match → OK
-/// assert!((w - 9.0 / 25.0).abs() < 1e-6);
+/// let a: ScalarPDF<Area> = PDF::new_from(3.0);
+/// let b: ScalarPDF<Area> = PDF::new_from(4.0);
+/// let w = power_heuristic_pdf(a, b, Vector::splat(2.0)); // measures match → OK
+/// assert!((w.extract::<0>() - 9.0 / 25.0).abs() < 1e-6);
 /// ```
 ///
 /// Mixing measures is rejected by the compiler:
 ///
 /// ```compile_fail
 /// use math::prelude::*;
-/// let a: ScalarPDF<Area> = PDF::new(3.0);
-/// let b: ScalarPDF<SolidAngle> = PDF::new(4.0);
-/// let _w = power_heuristic_pdf(a, b); // ERROR: Area ≠ SolidAngle
+/// let a: ScalarPDF<Area> = PDF::new_from(3.0);
+/// let b: ScalarPDF<SolidAngle> = PDF::new_from(4.0);
+/// let _w = power_heuristic_pdf(a, b, Vector::splat(2.0)); // ERROR: Area ≠ SolidAngle
 /// ```
 #[inline(always)]
-pub fn power_heuristic_pdf<
-    T: TranscendentalMath + FloatVector + GenericVector<Element = f32>,
-    M: Measure,
->(
+pub fn power_heuristic_pdf<T: FloatVector<Element = f32> + TranscendentalMath, M: Measure>(
     a: PDF<T, M>,
     b: PDF<T, M>,
     p: T,
@@ -95,16 +89,15 @@ pub fn gaussian(x: f64, alpha: f64, mu: f64, sigma1: f64, sigma2: f64) -> f64 {
 /// with transcendental support. Replaces the simdfloat_patch-gated
 /// `gaussian_f32x4`.
 #[inline(always)]
-pub fn gaussian_v<V, T>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
+pub fn gaussian_v<V>(x: V, alpha: f32, mu: f32, sigma1: f32, sigma2: f32) -> V
 where
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32> + TranscendentalMath,
 {
     let sigma = x
-        .cmp_lt(V::splat(mu.into()))
-        .select(V::splat(sigma1.into()), V::splat(sigma2.into()));
-    let sqrt = (x - V::splat(mu.into())) / sigma;
-    V::splat(alpha.into()) * (-(sqrt * sqrt) / V::splat(2.0.into())).exp()
+        .cmp_lt(V::splat(mu))
+        .select(V::splat(sigma1), V::splat(sigma2));
+    let sqrt = (x - V::splat(mu)) / sigma;
+    V::splat(alpha) * (-(sqrt * sqrt) / V::splat(2.0)).exp()
 }
 
 #[inline(always)]
@@ -125,14 +118,13 @@ pub fn blackbody(temperature: f32, lambda: f32) -> f32 {
 /// Vector form of `blackbody`. Replaces the simdfloat_patch-gated
 /// `blackbody_f32x4`; now works across thermite vector widths.
 #[inline(always)]
-pub fn blackbody_v<V, T>(temperature: f32, lambda: V) -> V
+pub fn blackbody_v<V>(temperature: f32, lambda: V) -> V
 where
-    V: FloatVector<Element = T> + TranscendentalMath,
-    T: FloatElement + From<f32>,
+    V: FloatVector<Element = f32> + TranscendentalMath,
 {
-    let lambda = lambda * V::splat(1e-9.into());
-    lambda.powf(V::splat((-5.0).into())) * V::splat(HCC2.into())
-        / ((V::splat(HKC.into()) / (lambda * V::splat(temperature.into()))).exp() - V::ONE)
+    let lambda = lambda * V::splat(1e-9);
+    lambda.powf(V::splat(-5.0)) * V::splat(HCC2.into())
+        / ((V::splat(HKC) / (lambda * V::splat(temperature))).exp() - V::ONE)
 }
 
 #[inline(always)]
@@ -233,7 +225,7 @@ where
     let (ex, ey) = (V::splat(e.0), V::splat(e.1));
     let (eix_v, eiy_v) = (V::splat(eix), V::splat(eiy));
     let zero = V::ZERO;
-    let one = V::splat(1.0);
+    let one = V::ONE;
 
     let mut tx = V::splat(FRAC_1_SQRT_2);
     let mut ty = V::splat(FRAC_1_SQRT_2);
