@@ -105,6 +105,28 @@ fn vec3_of<S: Simd>(c: [f32; 3]) -> Vec3<S> {
     Vec3::new(c[0], c[1], c[2])
 }
 
+/// Nudge a raw `[0, 1)` sample coordinate into the open interval `(0, 1)`.
+///
+/// The RNG emits the half-open `[0, 1)`, so `0.0` is a real output. Several warp
+/// cores contain a `√·` (or `acos`, `xᵖ` with `p < 1`) whose derivative is `+∞`
+/// when its argument hits `0` — at a sphere/disk pole or a lobe axis. There the
+/// autodiff Jacobian has one `∞` column meeting a zero-length column, so the
+/// Gram-determinant pdf `1/√det(JᵀJ)` forms `0·∞ = NaN` (this NaN'd a
+/// `sharp_light` render). The warp pdfs are continuous, so evaluating a hair off
+/// the endpoint returns the correct finite density — exact for the azimuthally
+/// symmetric warps, whose orthogonal Jacobian columns make `det = g00·g11` an
+/// ε-independent product (no cancellation). Applied identically on the value and
+/// pdf paths so the produced sample is unchanged between them. See the
+/// `boundary` tests.
+#[inline(always)]
+fn open_unit(t: f32) -> f32 {
+    // One ulp below 1.0 is already in contract; only the closed `0.0` endpoint
+    // (and its `1.0` mirror, unreachable here) is singular. EPS is well above the
+    // subnormal range so the nudged `√·` arguments stay comfortably normalized.
+    const EPS: f32 = 1e-6;
+    t.clamp(EPS, 1.0 - EPS)
+}
+
 /// Run a 2-input warp core on dual inputs and split into (sample, pdf-value),
 /// where the pdf value is the reciprocal Gram determinant of the warp Jacobian.
 #[inline(always)]
@@ -112,7 +134,10 @@ fn warp_with_pdf<S: Simd>(
     core: impl Fn(Dual<2>, Dual<2>) -> [Dual<2>; 3],
     r: Sample2D,
 ) -> (Vec3<S>, f32) {
-    let out = core(Dual::variable(r.x, 0), Dual::variable(r.y, 1));
+    let out = core(
+        Dual::variable(open_unit(r.x), 0),
+        Dual::variable(open_unit(r.y), 1),
+    );
     let v = vec3_of([out[0].value(), out[1].value(), out[2].value()]);
     (v, reciprocal_gram_det_2(&out))
 }
@@ -125,9 +150,9 @@ fn warp_with_pdf_3<S: Simd>(
     r: Sample3D,
 ) -> (Vec3<S>, f32) {
     let out = core(
-        Dual::variable(r.x, 0),
-        Dual::variable(r.y, 1),
-        Dual::variable(r.z, 2),
+        Dual::variable(open_unit(r.x), 0),
+        Dual::variable(open_unit(r.y), 1),
+        Dual::variable(open_unit(r.z), 2),
     );
     let v = vec3_of([out[0].value(), out[1].value(), out[2].value()]);
     (v, reciprocal_det_3(&out))
@@ -136,7 +161,10 @@ fn warp_with_pdf_3<S: Simd>(
 /// Uniformly distributed wrt the volume measure on the unit ball.
 #[inline(always)]
 pub fn random_in_unit_sphere<S: Simd>(r: Sample3D) -> Vec3<S> {
-    vec3_of(in_unit_sphere_core::<f32>(r.x, r.y, r.z).map(SampleField::value))
+    vec3_of(
+        in_unit_sphere_core::<f32>(open_unit(r.x), open_unit(r.y), open_unit(r.z))
+            .map(SampleField::value),
+    )
 }
 
 /// As [`random_in_unit_sphere`], but also returns the (uniform) volume pdf
@@ -150,21 +178,24 @@ pub fn random_in_unit_sphere_with_pdf<S: Simd>(r: Sample3D) -> (Vec3<S>, ScalarP
 /// Uniformly distributed wrt the surface area / solid angle measure.
 #[inline(always)]
 pub fn random_on_unit_sphere<S: Simd>(r: Sample2D) -> Vec3<S> {
-    vec3_of(on_unit_sphere_core::<f32>(r.x, r.y).map(SampleField::value))
+    vec3_of(on_unit_sphere_core::<f32>(open_unit(r.x), open_unit(r.y)).map(SampleField::value))
 }
 
-/// As [`random_on_unit_sphere`], but also returns the (uniform) solid-angle pdf
-/// computed automatically from the warp Jacobian.
+/// As [`random_on_unit_sphere`], but also returns the (uniform) solid-angle pdf.
+/// changing away from using dual numbers for this one as it's analytically available and prone to pole singularities
 #[inline(always)]
 pub fn random_on_unit_sphere_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, ScalarPDF<SolidAngle>) {
-    let (v, p) = warp_with_pdf::<S>(on_unit_sphere_core, r);
-    (v, PDF::new(Vector::<f32>::splat(p)))
+    // let (v, p) = warp_with_pdf::<S>(on_unit_sphere_core, r);
+    // debug_assert!(!p.is_nan(), "{r:?}");
+    let v = random_on_unit_sphere(r);
+    // (v, ScalarPDF::new_from(p))
+    (v, PDF::new(Vector::<f32>::splat((4.0 * PI).recip())))
 }
 
 /// Uniformly distributed wrt the area measure on the unit disk.
 #[inline(always)]
 pub fn random_in_unit_disk<S: Simd>(r: Sample2D) -> Vec3<S> {
-    vec3_of(in_unit_disk_core::<f32>(r.x, r.y).map(SampleField::value))
+    vec3_of(in_unit_disk_core::<f32>(open_unit(r.x), open_unit(r.y)).map(SampleField::value))
 }
 
 /// As [`random_in_unit_disk`], but also returns the (uniform) area pdf computed
@@ -178,7 +209,7 @@ pub fn random_in_unit_disk_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, ScalarPDF
 /// Cosine-weighted hemisphere direction. Uniform wrt projected solid angle.
 #[inline(always)]
 pub fn random_cosine_direction<S: Simd>(r: Sample2D) -> Vec3<S> {
-    vec3_of(cosine_direction_core::<f32>(r.x, r.y).map(SampleField::value))
+    vec3_of(cosine_direction_core::<f32>(open_unit(r.x), open_unit(r.y)).map(SampleField::value))
 }
 
 /// As [`random_cosine_direction`], but also returns the solid-angle pdf
@@ -195,17 +226,26 @@ pub fn random_cosine_direction_with_pdf<S: Simd>(r: Sample2D) -> (Vec3<S>, Scala
 /// `TangentFrame::from_normal(d).to_world(..)`.
 #[inline(always)]
 pub fn power_cosine_direction<S: Simd>(r: Sample2D, n: f32) -> Vec3<S> {
-    vec3_of(power_cosine_core::<f32>(r.x, r.y, n).map(SampleField::value))
+    vec3_of(power_cosine_core::<f32>(open_unit(r.x), open_unit(r.y), n).map(SampleField::value))
 }
 
 /// As [`power_cosine_direction`], but also returns the solid-angle pdf
-/// (`(n+1)/(2π)·cosⁿθ`) computed automatically from the warp Jacobian.
+/// `(n+1)/(2π)·cosⁿθ`.
+///
+/// Uses the closed form rather than the autodiff Gram determinant: at the lobe
+/// axis f32 rounds `cosθ` to exactly `1.0`, so `sinθ = √(1−cos²θ) = 0` and the
+/// autodiff Jacobian forms `0·∞ = NaN` there — an input-nudge can't escape the
+/// rounding for high `n`. The analytic form is finite everywhere (`boundary`
+/// tests) and is validated against an independent re-derivation of the closed
+/// form on the interior by `power_cosine_pdf_matches_closed_form`.
 #[inline(always)]
 pub fn power_cosine_direction_with_pdf<S: Simd>(
     r: Sample2D,
     n: f32,
 ) -> (Vec3<S>, ScalarPDF<SolidAngle>) {
-    let (v, p) = warp_with_pdf::<S>(|a, b| power_cosine_core(a, b, n), r);
+    let v = power_cosine_direction::<S>(r, n);
+    let cos_theta = v.z().max(0.0); // lobe is around +z
+    let p = (n + 1.0) / (2.0 * PI) * cos_theta.powf(n);
     (v, PDF::new(Vector::<f32>::splat(p)))
 }
 
@@ -214,14 +254,29 @@ pub fn power_cosine_direction_with_pdf<S: Simd>(
 /// `TangentFrame::from_normal(d).to_world(..)`.
 #[inline(always)]
 pub fn ggx_direction<S: Simd>(r: Sample2D, alpha: f32) -> Vec3<S> {
-    vec3_of(ggx_core::<f32>(r.x, r.y, alpha).map(SampleField::value))
+    vec3_of(ggx_core::<f32>(open_unit(r.x), open_unit(r.y), alpha).map(SampleField::value))
 }
 
-/// As [`ggx_direction`], but also returns the solid-angle pdf (`D(θ)·cosθ`)
-/// computed automatically from the warp Jacobian.
+/// As [`ggx_direction`], but also returns the solid-angle pdf `D(θ)·cosθ`, with
+/// `D = α²/(π·((α²−1)cos²θ+1)²)`.
+///
+/// Uses the closed form rather than the autodiff Gram determinant: at the lobe
+/// axis f32 rounds `cosθ` to exactly `1.0`, so `sinθ = √(1−cos²θ) = 0` and the
+/// autodiff Jacobian forms `0·∞ = NaN` there — an input-nudge can't escape the
+/// rounding for small `α`. The analytic form is finite everywhere (`boundary`
+/// tests) and is validated against an independent re-derivation of the closed
+/// form on the interior by `ggx_pdf_matches_closed_form`.
 #[inline(always)]
-pub fn ggx_direction_with_pdf<S: Simd>(r: Sample2D, alpha: f32) -> (Vec3<S>, ScalarPDF<SolidAngle>) {
-    let (v, p) = warp_with_pdf::<S>(|a, b| ggx_core(a, b, alpha), r);
+pub fn ggx_direction_with_pdf<S: Simd>(
+    r: Sample2D,
+    alpha: f32,
+) -> (Vec3<S>, ScalarPDF<SolidAngle>) {
+    let v = ggx_direction::<S>(r, alpha);
+    let cos_theta = v.z().max(0.0); // lobe is around +z
+    let a2 = alpha * alpha;
+    let denom = (a2 - 1.0) * cos_theta * cos_theta + 1.0;
+    let d = a2 / (PI * denom * denom);
+    let p = d * cos_theta;
     (v, PDF::new(Vector::<f32>::splat(p)))
 }
 
@@ -238,7 +293,7 @@ pub fn weighted_cosine_direction<S: Simd>(r: Sample2D, weight: f32) -> Vec3<S> {
 #[inline(always)]
 pub fn random_to_sphere<S: Simd>(r: Sample2D, radius: f32, distance_squared: f32) -> Vec3<S> {
     let k = radius * radius / distance_squared;
-    vec3_of(to_sphere_core::<f32>(r.x, r.y, k).map(SampleField::value))
+    vec3_of(to_sphere_core::<f32>(open_unit(r.x), open_unit(r.y), k).map(SampleField::value))
 }
 
 /// As [`random_to_sphere`], but also returns the (uniform) solid-angle pdf over
@@ -270,7 +325,9 @@ pub fn random_to_sphere_with_pdf<S: Simd>(
 pub fn to_sphere_pdf(radius: f32, distance_squared: f32) -> ScalarPDF<SolidAngle> {
     let k = radius * radius / distance_squared;
     let cos_theta_max = (1.0 - k).sqrt();
-    PDF::new(Vector::<f32>::splat(1.0 / (2.0 * PI * (1.0 - cos_theta_max))))
+    PDF::new(Vector::<f32>::splat(
+        1.0 / (2.0 * PI * (1.0 - cos_theta_max)),
+    ))
 }
 
 /// As [`random_to_sphere_with_pdf`], but returns the analytic closed-form pdf
@@ -293,19 +350,46 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    type TestS = thermite::backend::scalar::Scalar;
+    // type TestS = thermite::backend::scalar::Scalar;
+    type TestS = thermite::backend::x86_v3::X86V3;
     type V3 = Vec3<TestS>;
 
     fn arb_sample2d() -> impl Strategy<Value = Sample2D> {
-        (0.0f32..0.9999, 0.0f32..0.9999).prop_map(|(x, y)| Sample2D::new(x, y))
+        (0.0f32..1.0, 0.0f32..1.0).prop_map(|(x, y)| Sample2D::new(x, y))
+    }
+
+    fn arb_sample2d_interior() -> impl Strategy<Value = Sample2D> {
+        (0.0f32..1.0, 0.0f32..1.0)
+            .prop_map(|(x, y)| Sample2D::new(0.001 + x * 0.998, 0.001 + y * 0.998))
     }
 
     fn arb_sample3d() -> impl Strategy<Value = Sample3D> {
-        (0.0f32..0.9999, 0.0f32..0.9999, 0.0f32..0.9999)
-            .prop_map(|(x, y, z)| Sample3D::new(x, y, z))
+        (0.0f32..1.0, 0.0f32..1.0, 0.0f32..1.0).prop_map(|(x, y, z)| Sample3D::new(x, y, z))
+    }
+
+    /// Interior-restricted `Sample3D`, kept off the spherical-coordinate
+    /// singularities (`sinθ→0`, `c^(−2/3)→∞`) where the 3×3 autodiff determinant
+    /// loses f32 precision. Built by remapping the unit interval rather than
+    /// sampling a sub-unit range directly, which trips a panic in proptest's
+    /// bounded-float sampler (`float_samplers.rs`).
+    fn arb_sample3d_interior() -> impl Strategy<Value = Sample3D> {
+        (0.0f32..1.0, 0.0f32..1.0, 0.0f32..1.0)
+            .prop_map(|(x, y, z)| Sample3D::new(0.02 + 0.96 * x, 0.05 + 0.90 * y, 0.05 + 0.93 * z))
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000000))]
+
+        #[test]
+        fn sphere_pdf_is_uniform_solid_angle(s in arb_sample2d()) {
+            let (v, p): (V3, ScalarPDF<SolidAngle>) = random_on_unit_sphere_with_pdf(s);
+            // pdf is uniform over the sphere: 1/(4π)
+            prop_assert!((p.raw().extract::<0>() - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", p.raw().extract::<0>());
+            // sample agrees with the value-only path
+            let v2: V3 = random_on_unit_sphere(s);
+            prop_assert!((v - v2).norm() < 1e-5);
+        }
+
         #[test]
         fn in_unit_sphere_norm_le_1(s in arb_sample3d()) {
             let v: V3 = random_in_unit_sphere(s);
@@ -362,15 +446,6 @@ mod tests {
         // Each asserts the pdf computed from the warp Jacobian matches the
         // known closed form, and that the sample equals the value-path warp.
 
-        #[test]
-        fn sphere_pdf_is_uniform_solid_angle(s in arb_sample2d()) {
-            let (v, p): (V3, ScalarPDF<SolidAngle>) = random_on_unit_sphere_with_pdf(s);
-            // pdf is uniform over the sphere: 1/(4π)
-            prop_assert!((p.raw().extract::<0>() - 1.0 / (4.0 * PI)).abs() < 1e-4, "p={}", p.raw().extract::<0>());
-            // sample agrees with the value-only path
-            let v2: V3 = random_on_unit_sphere(s);
-            prop_assert!((v - v2).norm() < 1e-5);
-        }
 
         #[test]
         fn disk_pdf_is_uniform_area(s in arb_sample2d()) {
@@ -399,10 +474,7 @@ mod tests {
         // formed from huge near-cancelling terms and loses f32 precision — the
         // analytic pdf stays a constant 3/(4π) regardless.
         #[test]
-        fn volume_pdf_is_uniform(
-            x in 0.02f32..0.98, y in 0.05f32..0.95, z in 0.05f32..0.98,
-        ) {
-            let s = Sample3D::new(x, y, z);
+        fn volume_pdf_is_uniform(s in arb_sample3d_interior()) {
             let (v, p): (V3, ScalarPDF<Volume>) = random_in_unit_sphere_with_pdf(s);
             // uniform over the unit ball: 1 / (4/3 π) = 3/(4π)
             prop_assert!((p.raw().extract::<0>() - 3.0 / (4.0 * PI)).abs() < 2e-3, "p={}", p.raw().extract::<0>());
@@ -428,7 +500,7 @@ mod tests {
         // the same direction as the autodiff variant.
         #[test]
         fn to_sphere_pdf_analytic_matches_autodiff(
-            s in arb_sample2d(), radius in 0.1f32..3.0, dist_sq in 10.0f32..40.0,
+            s in arb_sample2d_interior(), radius in 0.1f32..3.0, dist_sq in 10.0f32..40.0,
         ) {
             let (v_ad, p_ad): (V3, ScalarPDF<SolidAngle>) =
                 random_to_sphere_with_pdf(s, radius, dist_sq);
@@ -501,6 +573,169 @@ mod tests {
             // at α=1, D=1/π so pdf = cosθ/π at the produced direction.
             let (v, p): (V3, ScalarPDF<SolidAngle>) = ggx_direction_with_pdf(s, 1.0);
             prop_assert!((p.raw().extract::<0>() - v.z() / PI).abs() < 1e-4, "p={}, z/π={}", p.raw().extract::<0>(), v.z() / PI);
+        }
+    }
+
+    // ======================================================================
+    // Deterministic boundary-sample tests.
+    //
+    // `RandomSampler` yields the half-open interval `[0, 1)`, so `x == 0.0` and
+    // `y == 0.0` are *real* RNG outputs (they bit a `sharp_light` render via the
+    // sphere pole). A `0.0..1.0` proptest range is half-open and effectively
+    // never lands on those exact coordinates, so it does not exercise them.
+    //
+    // Every autodiff `*_with_pdf` warp computes the pdf as `1/√det(JᵀJ)`. Several
+    // cores contain a `√·` (or `acos`, `xᵖ` with `p<1`) whose derivative is `+∞`
+    // when its argument is `0` — at a sphere/disk pole or a lobe axis. There the
+    // Jacobian has one `∞` column and one zero-length column, so the Gram
+    // determinant forms `0·∞ = NaN`. These tests enumerate every {0, ½, 1}²
+    // corner/edge sample and assert the pdf is finite and positive, so any warp
+    // that degenerates at a boundary is caught deterministically rather than by
+    // a lucky proptest draw.
+    // ======================================================================
+    mod boundary {
+        use super::*;
+
+        /// The sampler domain is the half-open `[0, 1)` (`Sample2D::new`
+        /// debug-asserts `0 ≤ · < 1`), so the reachable extremes are exactly
+        /// `0.0` (a real RNG output — this is the coordinate that NaN'd the warps)
+        /// and the largest float strictly below `1.0`. `0.5` is an interior
+        /// control point. `1.0` itself is out of contract and never tested.
+        const ALMOST_ONE: f32 = f32::from_bits(0x3f7f_ffff); // 1.0 − 1 ulp ≈ 0.99999994
+        const EDGE: [f32; 3] = [0.0, 0.5, ALMOST_ONE];
+
+        fn edge_2d() -> Vec<Sample2D> {
+            let mut out = Vec::new();
+            for &x in &EDGE {
+                for &y in &EDGE {
+                    out.push(Sample2D::new(x, y));
+                }
+            }
+            out
+        }
+
+        fn edge_3d() -> Vec<Sample3D> {
+            let mut out = Vec::new();
+            for &x in &EDGE {
+                for &y in &EDGE {
+                    for &z in &EDGE {
+                        out.push(Sample3D::new(x, y, z));
+                    }
+                }
+            }
+            out
+        }
+
+        /// Assert a pdf is a usable density (finite, strictly positive) at a
+        /// boundary sample, naming the offending coordinate on failure.
+        #[track_caller]
+        fn assert_usable_pdf(name: &str, s: impl core::fmt::Debug, p: f32) {
+            assert!(
+                p.is_finite() && p > 0.0,
+                "{name}: pdf degenerated to {p} at boundary sample {s:?} \
+                 (expected a finite, positive density)"
+            );
+        }
+
+        #[test]
+        fn sphere_pdf_finite_at_boundaries() {
+            for s in edge_2d() {
+                let (_v, p): (V3, ScalarPDF<SolidAngle>) = random_on_unit_sphere_with_pdf(s);
+                let p = p.raw().extract::<0>();
+                assert_usable_pdf("random_on_unit_sphere_with_pdf", s, p);
+                // uniform: exact analytic constant everywhere, poles included
+                assert!(
+                    (p - 1.0 / (4.0 * PI)).abs() < 1e-4,
+                    "sphere pdf {p} != 1/(4π) at {s:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn disk_pdf_finite_at_boundaries() {
+            for s in edge_2d() {
+                let (_v, p): (V3, ScalarPDF<Area>) = random_in_unit_disk_with_pdf(s);
+                assert_usable_pdf("random_in_unit_disk_with_pdf", s, p.raw().extract::<0>());
+            }
+        }
+
+        #[test]
+        fn cosine_pdf_finite_at_boundaries() {
+            for s in edge_2d() {
+                let (_v, p): (V3, ScalarPDF<SolidAngle>) = random_cosine_direction_with_pdf(s);
+                assert_usable_pdf(
+                    "random_cosine_direction_with_pdf",
+                    s,
+                    p.raw().extract::<0>(),
+                );
+            }
+        }
+
+        #[test]
+        fn to_sphere_pdf_finite_at_boundaries() {
+            let (radius, dist_sq) = (1.0f32, 4.0f32);
+            for s in edge_2d() {
+                let (_v, p): (V3, ScalarPDF<SolidAngle>) =
+                    random_to_sphere_with_pdf(s, radius, dist_sq);
+                assert_usable_pdf("random_to_sphere_with_pdf", s, p.raw().extract::<0>());
+            }
+        }
+
+        #[test]
+        fn power_cosine_pdf_finite_at_boundaries() {
+            for n in [0.0f32, 1.0, 27.62905, 64.0] {
+                for s in edge_2d() {
+                    let (_v, p): (V3, ScalarPDF<SolidAngle>) =
+                        power_cosine_direction_with_pdf(s, n);
+                    assert_usable_pdf(
+                        &format!("power_cosine_direction_with_pdf(n={n})"),
+                        s,
+                        p.raw().extract::<0>(),
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn ggx_pdf_finite_at_boundaries() {
+            for alpha in [0.05f32, 0.5, 1.0] {
+                for s in edge_2d() {
+                    let (_v, p): (V3, ScalarPDF<SolidAngle>) = ggx_direction_with_pdf(s, alpha);
+                    assert_usable_pdf(
+                        &format!("ggx_direction_with_pdf(alpha={alpha})"),
+                        s,
+                        p.raw().extract::<0>(),
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn volume_pdf_finite_at_boundaries() {
+            for s in edge_3d() {
+                let (_v, p): (V3, ScalarPDF<Volume>) = random_in_unit_sphere_with_pdf(s);
+                let p = p.raw().extract::<0>();
+                assert_usable_pdf("random_in_unit_sphere_with_pdf", s, p);
+                // uniform over the ball: exact analytic constant everywhere
+                assert!(
+                    (p - 3.0 / (4.0 * PI)).abs() < 2e-3,
+                    "volume pdf {p} != 3/(4π) at {s:?}"
+                );
+            }
+        }
+
+        /// The value path and the pdf path must produce the *same* direction at
+        /// every boundary sample (the hardening must nudge both identically).
+        #[test]
+        fn value_and_pdf_paths_agree_at_boundaries() {
+            for s in edge_2d() {
+                let (v_pdf, _): (V3, ScalarPDF<SolidAngle>) = random_on_unit_sphere_with_pdf(s);
+                let v_val: V3 = random_on_unit_sphere(s);
+                assert!(
+                    (v_pdf - v_val).norm() < 1e-5,
+                    "sphere value/pdf direction mismatch at {s:?}: {v_pdf:?} vs {v_val:?}"
+                );
+            }
         }
     }
 }

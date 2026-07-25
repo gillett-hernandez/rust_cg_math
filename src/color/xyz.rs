@@ -5,6 +5,7 @@ use thermite::simd::Simd;
 use thermite::vector::{GenericVector, NumericVector};
 
 /// CIE XYZ tristimulus values stored in lanes 0..3 of an `f32x4`, lane 4 = 0.
+
 pub struct XYZColor<S: Simd>(pub Vector<S::f32x4>);
 impl<S: Simd> Copy for XYZColor<S> {}
 impl<S: Simd> Clone for XYZColor<S> {
